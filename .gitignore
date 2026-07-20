@@ -1,0 +1,18 @@
+# Môi trường ảo / đã biên dịch
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Output research
+output/
+
+# Cấu hình nhạy cảm
+.env
+
+# Trình cài đặt
+get-pip.py
+
+# Hệ điều hành
+.DS_Store
+Thumbs.db

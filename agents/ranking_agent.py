@@ -26,6 +26,11 @@ K_FACTOR = 32  # hệ số cập nhật Elo
 
 
 def _elo_update(rating_a: float, rating_b: float, a_wins: bool) -> Tuple[float, float]:
+    """ 
+    Đoạn này là nơi tính toán Elo rating mới cho 2 giả thuyết sau khi đấu xong
+    vì Elo rating ban đầu là giá trị mặc định được truyền vào rating_a và rating_b
+    được quy ước trước(1200) nên có thể bị lệch so với thực tế .
+    """
     expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     score_a = 1.0 if a_wins else 0.0
     new_a = rating_a + K_FACTOR * (score_a - expected_a)

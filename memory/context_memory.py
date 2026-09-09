@@ -73,6 +73,7 @@ class ContextMemory:
 
     # ---------- Persist ----------
     def to_dict(self) -> dict:
+        """ Chuyển bộ nhớ sang dạng dict để có thể dễ dàng truyền qua JSON hoặc lưu vào file."""
         return {
             "research_goal": self.research_goal,
             "constraints": self.constraints,
@@ -85,12 +86,25 @@ class ContextMemory:
         }
 
     def save(self, path: str) -> None:
+        """ Lưu bộ nhớ được tạo ở dạng JSON vào file. """
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
 
     @staticmethod
     def load(path: str) -> "ContextMemory":
+        """
+        Tải bộ nhớ để sử dụng từ file JSON đã lưu.
+        Trong đó có:
+        - research_goal: mực tiêu nghiên cứu
+        - constraints: các ràng buộc nghiên cứu
+        - iteration: số vòng lặp hiện tại 
+        - hypotheses: danh sách các giả thuyết
+        - proximity_graph: đồ thị proximity giữa các giả thuyết → proximity graph là một đồ thị với các nút là các giả thuyết còn các cạnh là độ tương đồng giữa các giả thuyết
+        - match_history: lịch sử các trận đấu giữa cấc giả thuyết
+        - meta_review_notes: ghi chú của meta-reviewer về các giả thuyết
+        - agent_feedback: nhận xét của các agent về các giả thuyết 
+        """
         with open(path, "r", encoding="utf-8") as f:
             d = json.load(f)
         mem = ContextMemory(d["research_goal"], d.get("constraints", ""))

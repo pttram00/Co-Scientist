@@ -38,30 +38,37 @@ class ContextMemory:
         return sorted(active, key=lambda h: h.elo_rating, reverse=True)[:k]
 
     def mark_status(self, hypothesis_id: str, status: HypothesisStatus) -> None:
+        """ Cập nhật trạng thái cho một giả thuyết """
         if hypothesis_id in self.hypotheses:
             self.hypotheses[hypothesis_id].status = status
 
     # ---------- Proximity ----------
     def set_proximity(self, id_a: str, id_b: str, similarity: float) -> None:
+        """ Được dùng để tạo một đồ thị giữa các giả thuyết để tìm các giả thuyết tương tự nhau """
         self.proximity_graph.setdefault(id_a, []).append((id_b, similarity))
         self.proximity_graph.setdefault(id_b, []).append((id_a, similarity))
 
     def neighbors(self, hypothesis_id: str, min_similarity: float = 0.0) -> List[Tuple[str, float]]:
+        """ Lấy các giả thuyết tương tự với giả thuyết có id = hypothesis_id """
         neigh = self.proximity_graph.get(hypothesis_id, [])
         return sorted([n for n in neigh if n[1] >= min_similarity], key=lambda x: x[1], reverse=True)
 
     # ---------- Tournament ----------
     def record_match(self, result: MatchResult) -> None:
+        """ Nơi lưu lại kết quả của các trận đấu giữa hai giả thuyết, về sau có thể dùng để ranking, ELO,..."""
         self.match_history.append(result)
 
     # ---------- Meta-review feedback ----------
     def add_meta_note(self, note: str) -> None:
+        """ Mỗi note là một nhận xét của meta-reviewer về các giả thuyết trong bộ nhớ. """
         self.meta_review_notes.append(note)
 
     def add_agent_feedback(self, agent_name: str, note: str) -> None:
+        """ Thêm nhận xét của một agent về các giả thuyết trong bộ nhớ."""
         self.agent_feedback.setdefault(agent_name, []).append(note)
 
     def get_agent_feedback(self, agent_name: str) -> List[str]:
+        """ Lấy tất cả nhận xét của một agent về các giả thuyết trong bộ nhớ."""
         return self.agent_feedback.get(agent_name, [])
 
     # ---------- Persist ----------

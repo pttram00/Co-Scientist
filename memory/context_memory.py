@@ -17,8 +17,9 @@ class ContextMemory:
         self.research_goal = research_goal
         self.constraints = constraints or ""
         self.hypotheses: Dict[str, Hypothesis] = {}
-        # proximity_graph[id] = list of (other_id, similarity 0-1)
-        self.proximity_graph: Dict[str, List[Tuple[str, float]]] = {}
+        # proximity_graph[id][other_id] = similarity 0-1 (đối xứng). Dùng dict thay cho
+        # list để ghi lại 1 cạnh không tạo bản ghi trùng và kiểm tra "đã tính chưa" O(1).
+        self.proximity_graph: Dict[str, Dict[str, float]] = {}
         self.match_history: List[MatchResult] = []
         self.meta_review_notes: List[str] = []
         self.agent_feedback: Dict[str, List[str]] = {}  # feedback cho từng agent
@@ -26,6 +27,11 @@ class ContextMemory:
         # Pool bài báo tra cứu làm grounding; GenerationAgent cache vào đây để
         # các iteration sau không phải retrieve lại (giảm lãng phí + ổn định ngữ cảnh).
         self.papers: Dict[str, Paper] = {}
+        # Tóm tắt các hướng nghiên cứu đã/chưa khám phá do MetaReviewAgent viết mỗi vòng;
+        # GenerationAgent đọc để mở rộng sang hướng mới (research expansion).
+        self.research_overview: str = ""
+        # Cảnh báo an toàn (giả thuyết bị gắn cờ, hướng nghiên cứu đáng lo ngại) để audit.
+        self.safety_alerts: List[str] = []
 
     # ---------- Hypothesis pool ----------
     def add_hypothesis(self, h: Hypothesis) -> None:
@@ -36,10 +42,17 @@ class ContextMemory:
         """ Các giả thuyết được coi là còn hiệu lực sẽ được dùng trong các pha sau """
         return [h for h in self.hypotheses.values() if h.status == HypothesisStatus.ACTIVE]
 
-    def get_top_k(self, k: int) -> List[Hypothesis]:
-        """ Lấy k các giả thuyết có elo rating cao nhất trong bộ nhớ """
-        active = self.get_active_hypotheses()
-        return sorted(active, key=lambda h: h.elo_rating, reverse=True)[:k]
+    def get_top_k(self, k: int, evaluated_only: bool = False) -> List[Hypothesis]:
+        """ Lấy k các giả thuyết active có elo rating cao nhất trong bộ nhớ.
+
+        evaluated_only=True: chỉ lấy giả thuyết đã có full review VÀ đã đấu ít nhất 1
+        trận. Tránh để giả thuyết mới (Elo mặc định 1200, chưa được đánh giá) vượt lên
+        trên các giả thuyết đã đấu và thua (Elo < 1200).
+        """
+        pool = self.get_active_hypotheses()
+        if evaluated_only:
+            pool = [h for h in pool if h.is_reviewed and h.matches_played > 0]
+        return sorted(pool, key=lambda h: h.elo_rating, reverse=True)[:k]
 
     def mark_status(self, hypothesis_id: str, status: HypothesisStatus) -> None:
         """ Cập nhật trạng thái cho một giả thuyết """
@@ -59,14 +72,21 @@ class ContextMemory:
 
     # ---------- Proximity ----------
     def set_proximity(self, id_a: str, id_b: str, similarity: float) -> None:
-        """ Được dùng để tạo một đồ thị giữa các giả thuyết để tìm các giả thuyết tương tự nhau """
-        self.proximity_graph.setdefault(id_a, []).append((id_b, similarity))
-        self.proximity_graph.setdefault(id_b, []).append((id_a, similarity))
+        """ Ghi (hoặc cập nhật) cạnh tương đồng giữa 2 giả thuyết, đối xứng 2 chiều. """
+        self.proximity_graph.setdefault(id_a, {})[id_b] = similarity
+        self.proximity_graph.setdefault(id_b, {})[id_a] = similarity
+
+    def has_proximity(self, id_a: str, id_b: str) -> bool:
+        """ Cặp này đã được chấm độ tương đồng chưa (để ProximityAgent không tính lại). """
+        return id_b in self.proximity_graph.get(id_a, {})
 
     def neighbors(self, hypothesis_id: str, min_similarity: float = 0.0) -> List[Tuple[str, float]]:
-        """ Lấy các giả thuyết tương tự với giả thuyết có id = hypothesis_id """
-        neigh = self.proximity_graph.get(hypothesis_id, [])
-        return sorted([n for n in neigh if n[1] >= min_similarity], key=lambda x: x[1], reverse=True)
+        """ Lấy các giả thuyết tương tự với giả thuyết có id = hypothesis_id, giảm dần theo similarity """
+        neigh = self.proximity_graph.get(hypothesis_id, {})
+        return sorted(
+            [(other, sim) for other, sim in neigh.items() if sim >= min_similarity],
+            key=lambda x: x[1], reverse=True,
+        )
 
     # ---------- Tournament ----------
     def record_match(self, result: MatchResult) -> None:
@@ -86,6 +106,11 @@ class ContextMemory:
         """ Lấy tất cả nhận xét của một agent về các giả thuyết trong bộ nhớ."""
         return self.agent_feedback.get(agent_name, [])
 
+    # ---------- Safety ----------
+    def add_safety_alert(self, note: str) -> None:
+        """ Ghi lại một cảnh báo an toàn (từ Reflection hoặc Meta-review) để audit. """
+        self.safety_alerts.append(note)
+
     # ---------- Persist ----------
     def to_dict(self) -> dict:
         """ Chuyển bộ nhớ sang dạng dict để có thể dễ dàng truyền qua JSON hoặc lưu vào file."""
@@ -99,6 +124,8 @@ class ContextMemory:
             "meta_review_notes": self.meta_review_notes,
             "agent_feedback": self.agent_feedback,
             "papers": {pid: p.to_dict() for pid, p in self.papers.items()},
+            "research_overview": self.research_overview,
+            "safety_alerts": self.safety_alerts,
         }
 
     def save(self, path: str) -> None:
@@ -114,22 +141,29 @@ class ContextMemory:
         Trong đó có:
         - research_goal: mực tiêu nghiên cứu
         - constraints: các ràng buộc nghiên cứu
-        - iteration: số vòng lặp hiện tại 
+        - iteration: số vòng lặp hiện tại
         - hypotheses: danh sách các giả thuyết
         - proximity_graph: đồ thị proximity giữa các giả thuyết → proximity graph là một đồ thị với các nút là các giả thuyết còn các cạnh là độ tương đồng giữa các giả thuyết
         - match_history: lịch sử các trận đấu giữa cấc giả thuyết
         - meta_review_notes: ghi chú của meta-reviewer về các giả thuyết
         - agent_feedback: nhận xét của các agent về các giả thuyết
         - papers: pool bài báo tra cứu làm grounding (cache để tái dùng)
+        - research_overview: tóm tắt hướng nghiên cứu đã/chưa khám phá
+        - safety_alerts: các cảnh báo an toàn đã ghi nhận
         """
         with open(path, "r", encoding="utf-8") as f:
             d = json.load(f)
         mem = ContextMemory(d["research_goal"], d.get("constraints", ""))
         mem.iteration = d.get("iteration", 0)
         mem.hypotheses = {hid: Hypothesis.from_dict(h) for hid, h in d["hypotheses"].items()}
-        mem.proximity_graph = {k: [tuple(x) for x in v] for k, v in d.get("proximity_graph", {}).items()}
+        for hid, edges in d.get("proximity_graph", {}).items():
+            # State cũ lưu dạng list [[other_id, sim], ...]; state mới là {other_id: sim}.
+            pairs = edges if isinstance(edges, list) else edges.items()
+            mem.proximity_graph[hid] = {other: float(sim) for other, sim in pairs}
         mem.match_history = [MatchResult(**m) for m in d.get("match_history", [])]
         mem.meta_review_notes = d.get("meta_review_notes", [])
         mem.agent_feedback = d.get("agent_feedback", {})
         mem.papers = {pid: Paper.from_dict(p) for pid, p in d.get("papers", {}).items()}
+        mem.research_overview = d.get("research_overview", "")
+        mem.safety_alerts = d.get("safety_alerts", [])
         return mem

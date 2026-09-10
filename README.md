@@ -2,31 +2,39 @@
 
 Research Co-Scientist là một framework đa tác tử (multi-agent) dùng để sinh, phản biện và cải tiến giả thuyết nghiên cứu khoa học theo chu trình có cấu trúc. Dự án được xây dựng theo mô hình điều phối một Orchestrator và nhiều agent chuyên biệt, tất cả chia sẻ cùng một bộ nhớ ngữ cảnh để duy trì trạng thái của cả hệ thống.
 
+Lịch sử thay đổi và đối chiếu với tài liệu gốc: xem [CHANGELOG.md](CHANGELOG.md).
+
 ## Mục tiêu của dự án
 
 Dự án hiện tại tập trung vào các nhiệm vụ sau:
 
-- Sinh ra các giả thuyết nghiên cứu mới từ một mục tiêu cụ thể.
-- Phản biện và lọc các giả thuyết trùng lặp hoặc yếu về tính khả thi.
+- Sinh ra các giả thuyết nghiên cứu mới từ một mục tiêu cụ thể, có grounding từ bài báo khoa học.
+- Phản biện (có tra cứu tài liệu) và lọc các giả thuyết trùng lặp, yếu hoặc không an toàn.
 - So sánh và xếp hạng giả thuyết bằng một cơ chế tương tự Elo.
 - Cải tiến các giả thuyết tốt nhất theo nhiều chiến lược khác nhau.
 - Xuất báo cáo tổng quan cuối cùng và lưu trạng thái toàn bộ hệ thống.
 
 ## Kiến trúc hiện tại
 
-Hệ thống gồm một Orchestrator điều phối ba pha liên tiếp trong mỗi vòng lặp:
+Trước khi chạy, **SafetyAgent** kiểm tra mục tiêu nghiên cứu; mục tiêu không an toàn bị từ chối.
+
+Sau đó Orchestrator điều phối ba pha liên tiếp trong mỗi vòng lặp:
 
 1. Pha 1 — Generation & Proximity
-   - GenerationAgent: sinh giả thuyết mới bằng ba chiến lược: literature-grounded, self-debate và assumption analysis.
-   - ProximityAgent: tính độ tương đồng giữa các giả thuyết và đánh dấu các cặp gần như trùng lặp dựa trên ngưỡng `duplicate_threshold`.
+   - GenerationAgent: sinh giả thuyết mới bằng ba chiến lược: literature-grounded, self-debate và assumption analysis. Từ vòng 2, prompt có thêm danh sách giả thuyết đã có và research overview của Meta-review để tránh lặp ý tưởng (research expansion).
+   - ProximityAgent: chấm độ tương đồng cho các cặp giả thuyết **chưa được chấm** (kết quả được cache), tối đa `proximity_max_pairs_per_iteration` cặp mỗi lượt, và đánh dấu các cặp gần như trùng lặp dựa trên ngưỡng `duplicate_threshold`.
 
 2. Pha 2 — Reflection & Ranking
-   - ReflectionAgent: phản biện từng giả thuyết theo ba tiêu chí: correctness, novelty và feasibility.
-   - RankingAgent: tổ chức các trận đấu cặp đôi giữa giả thuyết, chọn cặp ưu tiên theo đồ thị proximity và cập nhật Elo cho từng giả thuyết.
+   - ReflectionAgent: review mỗi giả thuyết **một lần**, theo hai bước:
+     - Initial review (không tra cứu): chấm nhanh correctness, novelty, feasibility và kiểm tra an toàn. Không qua thì chuyển sang `archived`, không an toàn thì `unsafe`.
+     - Full review (có tra cứu bài báo qua Retriever): tóm tắt phần đã biết trong tài liệu, mô phỏng cơ chế từng bước, chấm lại 3 tiêu chí.
+   - RankingAgent: tổ chức các trận đấu cặp đôi giữa các giả thuyết đã có full review. Giả thuyết mới luôn được đấu ít nhất một trận; sau đó ưu tiên cặp gần nhau trên đồ thị proximity và cặp có Elo liền kề. Cập nhật Elo cho từng giả thuyết.
 
 3. Pha 3 — Evolution & Meta Review
-   - EvolutionAgent: tạo các biến thể mới từ các giả thuyết top-rank bằng các chiến lược simplify, analogy và combine.
-   - MetaReviewAgent: tổng hợp các nhận xét phản biện và tạo phản hồi cho các agent ở vòng tiếp theo; ở cuối chu trình thì sinh báo cáo tổng quan.
+   - EvolutionAgent: tạo các biến thể mới từ các giả thuyết top-rank (đã review và đã đấu) bằng các chiến lược simplify, analogy và combine.
+   - MetaReviewAgent: tổng hợp nhận xét phản biện và lý do phân xử các trận đấu, tạo feedback cho mọi agent ở vòng tiếp theo, cập nhật research overview và cảnh báo nếu hướng nghiên cứu có vấn đề an toàn.
+
+Sau vòng lặp cuối, **pha kết thúc** review và xếp hạng các giả thuyết do Evolution vừa tạo, rồi MetaReviewAgent mới viết báo cáo tổng quan. Báo cáo chỉ gồm giả thuyết đã có full review và đã đấu ít nhất một trận.
 
 Toàn bộ hệ thống dùng ContextMemory làm lớp trung tâm lưu trữ:
 
@@ -35,6 +43,9 @@ Toàn bộ hệ thống dùng ContextMemory làm lớp trung tâm lưu trữ:
 - đồ thị proximity
 - lịch sử các trận đấu
 - ghi chú meta-review và feedback cho từng agent
+- pool bài báo dùng làm grounding
+- research overview (hướng nghiên cứu đã/chưa khám phá)
+- cảnh báo an toàn
 - số vòng lặp hiện tại
 
 ## Cấu trúc thư mục
@@ -43,6 +54,7 @@ Toàn bộ hệ thống dùng ContextMemory làm lớp trung tâm lưu trữ:
 research_coscientist/
 ├── agents/                  # các agent xử lý từng phần của quy trình
 │   ├── base_agent.py
+│   ├── safety_agent.py
 │   ├── generation_agent.py
 │   ├── proximity_agent.py
 │   ├── reflection_agent.py
@@ -51,12 +63,14 @@ research_coscientist/
 │   └── meta_review_agent.py
 ├── llm/                     # wrapper gọi mô hình LLM qua giao diện Anthropic-compatible
 ├── memory/                  # ContextMemory và trạng thái dùng chung
-├── models/                  # model dữ liệu: Hypothesis, Review, MatchResult
+├── models/                  # model dữ liệu: Hypothesis, Review, MatchResult, Paper
+├── retrieval/               # tra cứu bài báo từ arXiv, Semantic Scholar, OpenAlex
 ├── output/                  # thư mục lưu báo cáo và state JSON
-├── config.py                # cấu hình chung cho LLM và orchestrator
+├── config.py                # cấu hình chung cho LLM, retriever và orchestrator
 ├── main.py                  # CLI entrypoint
 ├── orchestrator.py          # điều phối vòng lặp 3 pha
 ├── requirements.txt         # phụ thuộc Python
+├── CHANGELOG.md             # lịch sử thay đổi
 └── README.md                # tài liệu dự án
 ```
 
@@ -64,9 +78,10 @@ research_coscientist/
 
 Các class quan trọng trong code hiện tại:
 
-- Hypothesis: đại diện cho một giả thuyết khoa học, gồm nội dung, cơ chế, mục tiêu nghiên cứu, nguồn agent sinh ra, chiến lược, review, Elo và trạng thái.
-- Review: lưu kết quả phản biện của ReflectionAgent với các điểm correctness, novelty, feasibility và nhận xét tổng hợp.
+- Hypothesis: đại diện cho một giả thuyết khoa học, gồm nội dung, cơ chế, mục tiêu nghiên cứu, nguồn agent sinh ra, chiến lược, review, Elo và trạng thái (`active`, `duplicate`, `archived`, `unsafe`).
+- Review: lưu kết quả phản biện của ReflectionAgent (`initial` hoặc `full`) với các điểm correctness, novelty, feasibility, nhận xét tổng hợp và danh sách tài liệu đã tra cứu (full review).
 - MatchResult: lưu kết quả một trận đấu ranking giữa hai giả thuyết.
+- Paper: một bài báo tra cứu được, dùng làm grounding.
 - ContextMemory: lớp trung tâm dùng để đọc/ghi trạng thái cho tất cả agent.
 
 ## Cấu hình
@@ -77,15 +92,21 @@ Các tham số cấu hình được định nghĩa trong [config.py](config.py) 
   - model: mặc định là `glm-5.2`
   - max_tokens: mặc định 2000
   - temperature: mặc định 0.7
-  - max_retries: mặc định 3
+  - max_retries: mặc định 3 (áp dụng cả khi model trả JSON lỗi)
   - max_concurrency: mặc định 5
+
+- RetrieverConfig
+  - k_per_source, pool_size, min_papers_for_grounding, papers_per_strategy: tra cứu grounding cho GenerationAgent
+  - review_max_queries, review_k_per_source, review_papers_per_review: tra cứu trong full review của ReflectionAgent
+  - max_concurrent_requests: số request đồng thời tối đa tới các nguồn ngoài (mặc định 4)
 
 - OrchestratorConfig
   - n_iterations: số vòng lặp chạy
   - hypotheses_per_iteration: số giả thuyết GenerationAgent sinh mỗi vòng
-  - matches_per_iteration: số cặp đấu RankingAgent chạy mỗi vòng
+  - matches_per_iteration: số cặp đấu RankingAgent chạy mỗi vòng (có thể nhiều hơn để mọi giả thuyết mới đều được đấu)
   - top_k_for_evolution: số giả thuyết tốt nhất được EvolutionAgent cải tiến
   - proximity_duplicate_threshold: ngưỡng đánh dấu trùng lặp
+  - proximity_max_pairs_per_iteration: số cặp tối đa ProximityAgent chấm mỗi lượt (mặc định 60)
   - output_dir: thư mục đầu ra
 
 ## Biến môi trường
@@ -95,6 +116,9 @@ Dự án đọc biến môi trường từ file `.env` ở thư mục gốc:
 ```env
 ANTHROPIC_AUTH_TOKEN=your_token_here
 ANTHROPIC_BASE_URL=https://api.anthropic.com
+# Tuỳ chọn:
+SEMANTIC_SCHOLAR_API_KEY=
+OPENALEX_MAILTO=
 ```
 
 Lưu ý:
@@ -134,26 +158,35 @@ python main.py --goal "Tìm cơ chế phân tử mới để ức chế sự gi�
 - `--hypotheses-per-iteration`: số giả thuyết sinh mỗi vòng
 - `--matches-per-iteration`: số trận đấu ranking mỗi vòng
 - `--top-k-for-evolution`: số giả thuyết top được cải tiến
+- `--proximity-max-pairs`: số cặp tối đa ProximityAgent chấm mỗi lượt
 - `--model`: tên model dùng để gọi LLM
 - `--output-dir`: thư mục lưu đầu ra
 
+Nếu mục tiêu nghiên cứu bị SafetyAgent từ chối, chương trình in lý do và thoát với mã 1.
+
 ## Quy trình chạy thực tế
 
-Mỗi lần chạy một iteration, orchestrator sẽ thực hiện theo thứ tự sau:
+0. SafetyAgent kiểm tra mục tiêu nghiên cứu.
+
+Mỗi iteration, orchestrator thực hiện theo thứ tự sau (lưu `state.json` sau mỗi pha):
 
 1. GenerationAgent tạo mới các giả thuyết.
-2. ProximityAgent so sánh từng cặp giả thuyết và lưu vào đồ thị proximity.
-3. ReflectionAgent đánh giá các giả thuyết đang active.
+2. ProximityAgent chấm các cặp giả thuyết mới và cập nhật đồ thị proximity.
+3. ReflectionAgent review các giả thuyết chưa được review (initial → full).
 4. RankingAgent chọn cặp đấu và cập nhật Elo.
 5. EvolutionAgent tạo các biến thể mới từ các giả thuyết top-rank.
-6. MetaReviewAgent tạo feedback cho các agent và cuối cùng sinh báo cáo tổng quan.
+6. MetaReviewAgent tạo feedback cho các agent và cập nhật research overview.
+
+Sau iteration cuối: pha kết thúc (proximity → review → ranking cho giả thuyết còn tồn đọng), rồi MetaReviewAgent sinh báo cáo tổng quan.
+
+Một lời gọi LLM lỗi (kể cả JSON lỗi sau khi đã thử lại) chỉ làm bỏ qua phần việc đó; giả thuyết review lỗi hoặc cặp proximity lỗi sẽ được thử lại ở lượt sau.
 
 ## Đầu ra
 
 Sau khi chạy, hệ thống sẽ tạo:
 
-- `output/final_report.md`: báo cáo tổng quan cuối cùng được viết bằng Markdown.
-- `output/state.json`: lưu toàn bộ trạng thái hệ thống, bao gồm mục tiêu, giả thuyết, review, lịch sử đấu, feedback và meta-notes.
+- `output/final_report.md`: báo cáo tổng quan cuối cùng được viết bằng Markdown. Nếu lời gọi LLM viết báo cáo lỗi, hệ thống ghi bản tổng hợp tự động từ top giả thuyết.
+- `output/state.json`: lưu toàn bộ trạng thái hệ thống, bao gồm mục tiêu, giả thuyết, review, đồ thị proximity, lịch sử đấu, feedback, meta-notes, research overview và cảnh báo an toàn.
 
 > File `state.json` hiện đang được lưu lại để tiện kiểm tra và mở rộng tính năng resume/continue trong các phiên bản sau.
 
@@ -166,9 +199,11 @@ Một số điểm có thể mở rộng tiếp:
 - Thêm agent mới hoặc thay thế logic hiện tại trong các module trong thư mục [agents](agents).
 - Mở rộng [memory/context_memory.py](memory/context_memory.py) để hỗ trợ load lại trạng thái từ file một cách tự động hơn.
 
+Các phần của tài liệu gốc chưa được triển khai được liệt kê ở cuối [CHANGELOG.md](CHANGELOG.md).
+
 ## Lưu ý quan trọng
 
 - Dự án này phụ thuộc vào một endpoint LLM có thể gọi được và token hợp lệ.
 - Nếu endpoint không phản hồi hoặc token không đúng, chương trình sẽ dừng lại tại bước gọi mô hình.
+- ReflectionAgent tra cứu bài báo cho từng giả thuyết, nên số request tới arXiv / Semantic Scholar / OpenAlex tăng theo số giả thuyết. Nên đặt `SEMANTIC_SCHOLAR_API_KEY` để tránh bị giới hạn tốc độ.
 - Mặc dù có tính năng lưu state, khung hiện tại chưa tự động resume từ `state.json` khi chạy lại; việc này có thể được mở rộng trong tương lai.
-

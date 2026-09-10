@@ -43,7 +43,14 @@ class RetrieverConfig:
     # arXiv yêu cầu User-Agent định danh rõ; dùng khi gửi request.
     user_agent: str = "Co-Scientist/0.1 (research-assistant; mailto:research@example.com)"
     request_timeout: float = 30.0   # giây — cho từng call tới 3 nguồn API ngoài.
-    max_retries: int = 2             # retry từng nguồn khi timeout/5xx.
+    max_retries: int = 2             # retry từng nguồn khi timeout/429/5xx.
+    # Số HTTP request song song tối đa tới các nguồn ngoài. Reflection tra cứu cho từng
+    # giả thuyết nên cần chặn để không bị rate limit (arXiv, S2 không key).
+    max_concurrent_requests: int = 4
+    # --- Tra cứu trong full review của ReflectionAgent (nhỏ hơn grounding của Generation) ---
+    review_max_queries: int = 2        # số query tối đa / giả thuyết (lấy từ initial review)
+    review_k_per_source: int = 5       # số paper / nguồn / query
+    review_papers_per_review: int = 6  # số paper đưa vào prompt full review
 
 
 @dataclass
@@ -53,6 +60,9 @@ class OrchestratorConfig:
     matches_per_iteration: int = 10             # số trận đấu Ranking chạy mỗi vòng
     top_k_for_evolution: int = 4                # số giả thuyết top được Evolution cải tiến
     proximity_duplicate_threshold: float = 0.85  # ngưỡng coi là trùng lặp
+    # Số cặp tối đa ProximityAgent chấm bằng LLM mỗi lượt. Cặp đã chấm được cache; khi
+    # số cặp mới vượt ngưỡng, ưu tiên cặp có độ trùng từ vựng cao (khả năng trùng lặp cao).
+    proximity_max_pairs_per_iteration: int = 60
     output_dir: str = "output"
 
 

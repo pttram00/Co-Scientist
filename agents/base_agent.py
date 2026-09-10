@@ -2,9 +2,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from llm.client import LLMClient
 from memory.context_memory import ContextMemory
+
+
+def as_bool(value: Any, default: bool = False) -> bool:
+    """LLM đôi khi trả "true"/"false" dạng chuỗi thay vì bool JSON -> chuẩn hoá."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "1", "pass", "safe"):
+            return True
+        if v in ("false", "no", "0", "fail", "unsafe"):
+            return False
+    return default
+
+
+def truncate(text: str, limit: int) -> str:
+    """Cắt ngắn text đưa vào prompt để không phình context."""
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
 
 class BaseAgent(ABC):

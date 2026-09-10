@@ -103,9 +103,34 @@ class LLMClient:
             + "\n\nQUAN TRỌNG: Chỉ trả về JSON hợp lệ, không thêm lời dẫn, "
               "không dùng markdown code fence."
         )
-        raw = await self.complete(json_system, user, **kwargs)
-        cleaned = re.sub(r"^```json|^```|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Không parse được JSON: {e}\nRaw: {raw[:500]}")
+        # Model đôi khi trả JSON lỗi/bị cắt cụt -> gọi lại (tối đa max_retries lần)
+        # thay vì làm hỏng cả pha. Lỗi auth/request vẫn raise ngay từ complete().
+        attempts = max(1, self.config.max_retries)
+        last_err: Optional[Exception] = None
+        for _ in range(attempts):
+            raw = await self.complete(json_system, user, **kwargs)
+            try:
+                return _parse_json(raw)
+            except ValueError as e:
+                last_err = e
+        raise ValueError(f"Không parse được JSON sau {attempts} lần: {last_err}")
+
+
+def _parse_json(raw: str) -> dict | list:
+    """Parse JSON từ output của model: bỏ code fence, nếu vẫn lỗi thì cắt từ '{'/'['
+    đầu tiên tới '}'/']' cuối cùng (model hay thêm lời dẫn trước/sau JSON)."""
+    cleaned = re.sub(r"^```json|^```|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        first_err = e
+    starts = [i for i in (cleaned.find("{"), cleaned.find("[")) if i != -1]
+    if starts:
+        start = min(starts)
+        end = max(cleaned.rfind("}"), cleaned.rfind("]"))
+        if end > start:
+            try:
+                return json.loads(cleaned[start:end + 1])
+            except json.JSONDecodeError:
+                pass
+    raise ValueError(f"Không parse được JSON: {first_err}\nRaw: {raw[:500]}")

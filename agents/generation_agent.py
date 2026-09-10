@@ -15,7 +15,8 @@ Luồng tổng quan:
     |___ chọn 5-8 paper theo từng strategy     (LLM, 1 call/strategy; 2 hypothesis cùng strategy chia sẻ)
     |___ for i in range(n): _generate_one(strategy=strategies[i % 3], papers_for_strategy)
             user = research_goal + constraints + grounding_block(papers)
-                 + STRATEGY_INSTRUCTIONS[strategy] + JSON_SCHEMA_HINT + feedback_block()
+                 + STRATEGY_INSTRUCTIONS[strategy] + JSON_SCHEMA_HINT
+                 + expansion_block() + feedback_block()
         song song qua asyncio.gather(return_exceptions=True) -> accept partial (KHÔNG retry)
     |___ memory.add_hypothesis(new)
     |___ return new
@@ -30,7 +31,7 @@ from __future__ import annotations
 import asyncio
 from typing import Dict, List
 
-from agents.base_agent import BaseAgent
+from agents.base_agent import BaseAgent, truncate
 from config import RetrieverConfig
 from models.hypothesis import GenerationStrategy, Hypothesis
 from models.paper import Paper
@@ -241,6 +242,7 @@ class GenerationAgent(BaseAgent):
             f"Ràng buộc/bối cảnh: {self.memory.constraints or '(không có)'}\n\n"
             f"{self._grounding_block(papers)}\n\n"
             f"{STRATEGY_INSTRUCTIONS[strategy]}\n\n{JSON_SCHEMA_HINT}"
+            f"{self._expansion_block()}"
             f"{self.feedback_block()}"
         )
         data = await self.llm.complete_json(SYSTEM_PROMPT, user)
@@ -266,3 +268,24 @@ class GenerationAgent(BaseAgent):
             if p.abstract:
                 lines.append(p.abstract)
         return "Grounding từ bài báo (hãy dựa giả thuyết vào bằng chứng này):\n" + "\n".join(lines)
+
+    def _expansion_block(self) -> str:
+        """Research expansion (Methods, tr. 32): cho agent thấy các giả thuyết đã có và
+        research overview của Meta-review vòng trước, để tránh lặp ý tưởng cũ và mở
+        rộng sang vùng chưa khám phá. Rỗng ở vòng đầu tiên."""
+        existing = sorted(
+            self.memory.get_active_hypotheses(), key=lambda h: h.elo_rating, reverse=True
+        )[:10]
+        parts = []
+        if existing:
+            lines = "\n".join(f"- {truncate(h.content, 220)}" for h in existing)
+            parts.append(
+                "Các giả thuyết ĐÃ CÓ trong hệ thống (KHÔNG đề xuất lại ý tưởng tương tự, "
+                f"hãy khai thác hướng khác):\n{lines}"
+            )
+        if self.memory.research_overview:
+            parts.append(
+                "Research overview từ Meta-review (ưu tiên các hướng CHƯA được khám phá):\n"
+                + truncate(self.memory.research_overview, 1500)
+            )
+        return ("\n\n" + "\n\n".join(parts)) if parts else ""

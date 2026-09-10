@@ -50,24 +50,34 @@ class Retriever:
             headers=headers,
             follow_redirects=True,
         )
+        # Chặn số request đồng thời: GenerationAgent và ReflectionAgent (tra cứu cho
+        # từng giả thuyết) dùng chung retriever -> tránh bắn hàng chục request cùng lúc.
+        self._sem = asyncio.Semaphore(config.max_concurrent_requests)
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
     # ---------------------------------------------------------------- API
 
-    async def search(self, queries: List[str]) -> List[Paper]:
+    async def search(
+        self,
+        queries: List[str],
+        k_per_source: Optional[int] = None,
+        pool_size: Optional[int] = None,
+    ) -> List[Paper]:
         """Tra cứu song song 3 nguồn cho từng query, gộp + dedup + rank.
 
-        Trả List[Paper] đã fusion, số lượng <= pool_size. Không bao giờ raise
-        do lỗi nguồn — chỉ log warning và bỏ nguồn đó.
+        k_per_source / pool_size: ghi đè cấu hình mặc định (ReflectionAgent dùng giá trị
+        nhỏ hơn cho tra cứu từng giả thuyết). Trả List[Paper] đã fusion, số lượng
+        <= pool_size. Không bao giờ raise do lỗi nguồn — chỉ log warning và bỏ nguồn đó.
         """
+        k = k_per_source or self.config.k_per_source
         # Mỗi query đánh vào cả 3 nguồn song song. Flatten tất cả (query×nguồn)
         # thành 1 đợt gather, return_exceptions=True để 1 lỗi không làm rớt cả mảng.
         coros = []
         for q in queries:
             for source_fn in (self._search_arxiv, self._search_semantic_scholar, self._search_openalex):
-                coros.append(source_fn(q, self.config.k_per_source))
+                coros.append(source_fn(q, k))
 
         raw_batches = await asyncio.gather(*coros, return_exceptions=True)
 
@@ -84,14 +94,15 @@ class Retriever:
             logger.warning("Retrieval trả về 0 paper (tất cả nguồn rỗng/lỗi). GenerationAgent sẽ fallback sinh không grounding.")
             return []
 
-        fused = self._fuse(flat)
+        size = pool_size or self.config.pool_size
+        fused = self._fuse(flat, size)
         logger.info("Retriever: %d raw -> %d sau fusion (pool_size=%d)",
-                    len(flat), len(fused), len(fused))
+                    len(flat), len(fused), size)
         return fused
 
     # ---------------------------------------------------------- Fusion
 
-    def _fuse(self, papers: List[Paper]) -> List[Paper]:
+    def _fuse(self, papers: List[Paper], pool_size: int) -> List[Paper]:
         """Dedup theo title chuẩn hoá (giữ bản citation cao) + rank theo citation desc.
 
         cutoff top pool_size. """
@@ -109,7 +120,7 @@ class Retriever:
         # Rank: citation desc. (Relevance đã ở mức query-level khi API sort; tới đây
         # ta ưu tiên paper có nhiều trích dẫn — đúng "ưu tiên lượt trích dẫn cao" của đặc tả.)
         uniq.sort(key=lambda p: p.citations, reverse=True)
-        return uniq[: self.config.pool_size]
+        return uniq[:pool_size]
 
     # ----------------------------------------------------- Nguồn: arXiv
 
@@ -246,7 +257,7 @@ class Retriever:
     # ------------------------------------------------------- HTTP helper
 
     async def _get(self, url: str, params: dict, headers: Optional[dict] = None) -> Optional[httpx.Response]:
-        """GET có retry nhẹ (theo config.max_retries) cho transient timeout/5xx.
+        """GET có retry nhẹ (theo config.max_retries) cho transient timeout/429/5xx.
 
         Trả Response hoặc None (khi retry hết). KHÔNG raise -> partial fallback.
         """
@@ -256,8 +267,11 @@ class Retriever:
         last_err = None
         for attempt in range(self.config.max_retries + 1):
             try:
-                r = await self._client.get(url, params=params, headers=h)
-                if r.status_code >= 500:
+                # Chỉ giữ semaphore trong lúc gửi request, không giữ trong lúc chờ backoff.
+                async with self._sem:
+                    r = await self._client.get(url, params=params, headers=h)
+                # 429 (rate limit) cũng là lỗi tạm thời -> chờ rồi thử lại như 5xx.
+                if r.status_code == 429 or r.status_code >= 500:
                     last_err = RuntimeError(f"HTTP {r.status_code}")
                     await asyncio.sleep(min(2 ** attempt, 8))
                     continue

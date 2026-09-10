@@ -16,6 +16,7 @@ from agents.reflection_agent import ReflectionAgent
 from config import AppConfig
 from llm.client import LLMClient
 from memory.context_memory import ContextMemory
+from retrieval.retriever import Retriever
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("orchestrator")
@@ -26,9 +27,11 @@ class Orchestrator:
         self.config = config or AppConfig()
         self.memory = ContextMemory(research_goal=research_goal, constraints=constraints)
         self.llm = LLMClient(self.config.llm)
+        self.retriever = Retriever(self.config.retriever)
 
-        # 1 instance / agent, dùng chung memory + llm client trong suốt vòng đời
-        self.generation_agent = GenerationAgent(self.llm, self.memory)
+        # 1 instance / agent, dùng chung memory + llm client trong suốt vòng đời.
+        # GenerationAgent cần thêm retriever để tra cứu paper làm grounding.
+        self.generation_agent = GenerationAgent(self.llm, self.memory, self.retriever, self.config.retriever)
         self.proximity_agent = ProximityAgent(self.llm, self.memory)
         self.reflection_agent = ReflectionAgent(self.llm, self.memory)
         self.ranking_agent = RankingAgent(self.llm, self.memory)
@@ -75,18 +78,21 @@ class Orchestrator:
         """Chạy đủ n_iterations vòng lặp 3 pha, rồi sinh báo cáo cuối cùng."""
         out_dir = Path(self.config.orchestrator.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for i in range(self.config.orchestrator.n_iterations):
+                self.memory.iteration = i + 1
+                logger.info("=== Iteration %d/%d ===", i + 1, self.config.orchestrator.n_iterations)
+                await self.run_phase_1()
+                await self.run_phase_2()
+                await self.run_phase_3()
+                self.memory.save(str(out_dir / "state.json"))
 
-        for i in range(self.config.orchestrator.n_iterations):
-            self.memory.iteration = i + 1
-            logger.info("=== Iteration %d/%d ===", i + 1, self.config.orchestrator.n_iterations)
-            await self.run_phase_1()
-            await self.run_phase_2()
-            await self.run_phase_3()
-            self.memory.save(str(out_dir / "state.json"))
-
-        logger.info("Sinh báo cáo tổng quan nghiên cứu cuối cùng...")
-        report = await self.meta_review_agent.run(mode="final_report")
-        report_path = out_dir / "final_report.md"
-        report_path.write_text(report, encoding="utf-8")
-        logger.info("Đã lưu báo cáo tại %s", report_path)
-        return str(report_path)
+            logger.info("Sinh báo cáo tổng quan nghiên cứu cuối cùng...")
+            report = await self.meta_review_agent.run(mode="final_report")
+            report_path = out_dir / "final_report.md"
+            report_path.write_text(report, encoding="utf-8")
+            logger.info("Đã lưu báo cáo tại %s", report_path)
+            return str(report_path)
+        finally:
+            # Đóng httpx client của retriever để không leak connection pool.
+            await self.retriever.aclose()

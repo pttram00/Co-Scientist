@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from models.hypothesis import Hypothesis, HypothesisStatus, MatchResult
+from models.paper import Paper
 
 
 class ContextMemory:
@@ -22,6 +23,9 @@ class ContextMemory:
         self.meta_review_notes: List[str] = []
         self.agent_feedback: Dict[str, List[str]] = {}  # feedback cho từng agent
         self.iteration: int = 0
+        # Pool bài báo tra cứu làm grounding; GenerationAgent cache vào đây để
+        # các iteration sau không phải retrieve lại (giảm lãng phí + ổn định ngữ cảnh).
+        self.papers: Dict[str, Paper] = {}
 
     # ---------- Hypothesis pool ----------
     def add_hypothesis(self, h: Hypothesis) -> None:
@@ -41,6 +45,17 @@ class ContextMemory:
         """ Cập nhật trạng thái cho một giả thuyết """
         if hypothesis_id in self.hypotheses:
             self.hypotheses[hypothesis_id].status = status
+
+    # ---------- Paper pool (grounding) ----------
+    def add_paper(self, papers: List[Paper]) -> None:
+        """Thêm/ghi đè paper vào pool theo id. Retriever đã dedup rồi nên đây chủ yếu
+        là cache để tái dùng giữa các iteration."""
+        for p in papers:
+            self.papers[p.id] = p
+
+    def get_papers(self) -> List[Paper]:
+        """ Lấy toàn bộ pool paper đã cache (chưa sắp xếp — gọi tự sort nếu cần). """
+        return list(self.papers.values())
 
     # ---------- Proximity ----------
     def set_proximity(self, id_a: str, id_b: str, similarity: float) -> None:
@@ -83,6 +98,7 @@ class ContextMemory:
             "match_history": [m.__dict__ for m in self.match_history],
             "meta_review_notes": self.meta_review_notes,
             "agent_feedback": self.agent_feedback,
+            "papers": {pid: p.to_dict() for pid, p in self.papers.items()},
         }
 
     def save(self, path: str) -> None:
@@ -103,7 +119,8 @@ class ContextMemory:
         - proximity_graph: đồ thị proximity giữa các giả thuyết → proximity graph là một đồ thị với các nút là các giả thuyết còn các cạnh là độ tương đồng giữa các giả thuyết
         - match_history: lịch sử các trận đấu giữa cấc giả thuyết
         - meta_review_notes: ghi chú của meta-reviewer về các giả thuyết
-        - agent_feedback: nhận xét của các agent về các giả thuyết 
+        - agent_feedback: nhận xét của các agent về các giả thuyết
+        - papers: pool bài báo tra cứu làm grounding (cache để tái dùng)
         """
         with open(path, "r", encoding="utf-8") as f:
             d = json.load(f)
@@ -114,4 +131,5 @@ class ContextMemory:
         mem.match_history = [MatchResult(**m) for m in d.get("match_history", [])]
         mem.meta_review_notes = d.get("meta_review_notes", [])
         mem.agent_feedback = d.get("agent_feedback", {})
+        mem.papers = {pid: Paper.from_dict(p) for pid, p in d.get("papers", {}).items()}
         return mem

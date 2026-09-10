@@ -22,6 +22,31 @@ class LLMConfig:
 
 
 @dataclass
+class RetrieverConfig:
+    # Số paper tối đa mong muốn thu về MỖI NGUỒN cho MỘT query trước khi gộp.
+    # 3 nguồn × N query × k_per_query là số call/số record raw.
+    k_per_source: int = 10
+    # Sau khi gộp + dedup + rank theo citation, giữ top pool_size làm pool grounding.
+    pool_size: int = 20
+    # Ngưỡng tối thiểu để coi cache memory.papers đã "đủ": nếu đủ thì skip retrieval.
+    min_papers_for_grounding: int = 5
+    # Số paper tối đa truyền vào 1 prompt (_select_papers_llm).
+    papers_per_strategy: int = 7
+    # Semantic Scholar API key (tùy chọn; trống -> rate limit thấp hơn nhưng vẫn dùng được).
+    semantic_scholar_api_key: str = field(
+        default_factory=lambda: os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
+    )
+    # OpenAlex khuyến khích mailto (polite pool) — không bắt buộc; trống vẫn gọi được.
+    openalex_mailto: str = field(
+        default_factory=lambda: os.environ.get("OPENALEX_MAILTO", "")
+    )
+    # arXiv yêu cầu User-Agent định danh rõ; dùng khi gửi request.
+    user_agent: str = "Co-Scientist/0.1 (research-assistant; mailto:research@example.com)"
+    request_timeout: float = 30.0   # giây — cho từng call tới 3 nguồn API ngoài.
+    max_retries: int = 2             # retry từng nguồn khi timeout/5xx.
+
+
+@dataclass
 class OrchestratorConfig:
     n_iterations: int = 3
     hypotheses_per_iteration: int = 6          # số giả thuyết Generation sinh mỗi vòng
@@ -34,5 +59,6 @@ class OrchestratorConfig:
 @dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
+    retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
  

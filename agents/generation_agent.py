@@ -1,4 +1,17 @@
-"""Pha 1 — GenerationAgent: sinh giả thuyết khoa học mới."""
+"""Pha 1 — GenerationAgent: sinh giả thuyết khoa học mới.
+ - Mục tiêu: Trước khi sinh giả thuyết, GenerateAgent phải tra cứu các bài báo hiện có liên quan
+ đến mục tiêu nghiên cứu đọc tiêu đề + tóm tắt (abstract) và chứng minh (grounding) cho LLM với bằng chứng thật
+ Sau đó mới đề xuất giả thuyết. 
+
+ Luồng tổng quan:
+ GenerationAgent.run(n)
+ |___ self.retriever.search(query, 15) -- arXiv + Semantic Scholar + OpenAlex (song song)
+                                       |_ gộp các bài báo theo tiêu đề, ưu tiên citation cao
+
+
+
+"""
+
 from __future__ import annotations
 
 import asyncio

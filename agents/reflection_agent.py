@@ -50,5 +50,5 @@ class ReflectionAgent(BaseAgent):
         active = self.memory.get_active_hypotheses()
         reviews = await asyncio.gather(*[self._review_one(h) for h in active])
         for h, r in zip(active, reviews):
-            h.reviews.append(r)
+            h.reviews.append(r)             # gán thêm review cho một giả thuyết 
         return active

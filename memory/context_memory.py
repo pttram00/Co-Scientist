@@ -16,7 +16,7 @@ class ContextMemory:
     def __init__(self, research_goal: str, constraints: Optional[str] = None):
         self.research_goal = research_goal
         self.constraints = constraints or ""
-        self.hypotheses: Dict[str, Hypothesis] = {}
+        self.hypotheses: Dict[str, Hypothesis] = {}             # Nơi lưu trữ các giả thuyết tạo ra trong quá trình nghiên cứu
         # proximity_graph[id] = list of (other_id, similarity 0-1)
         self.proximity_graph: Dict[str, List[Tuple[str, float]]] = {}
         self.match_history: List[MatchResult] = []

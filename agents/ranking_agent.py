@@ -29,7 +29,8 @@ def _elo_update(rating_a: float, rating_b: float, a_wins: bool) -> Tuple[float, 
     """ 
     Đoạn này là nơi tính toán Elo rating mới cho 2 giả thuyết sau khi đấu xong
     vì Elo rating ban đầu là giá trị mặc định được truyền vào rating_a và rating_b
-    được quy ước trước(1200) nên có thể bị lệch so với thực tế .
+    được quy ước trước(1200) nên có thể bị lệch so với thực tế.
+    Điểm elo này có thể nói là một giá trị đánh giá tổng hợp về một giả thuyết dựa trên các trận đấu.
     """
     expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     score_a = 1.0 if a_wins else 0.0
@@ -42,20 +43,23 @@ class RankingAgent(BaseAgent):
     name = "ranking_agent"
 
     def _select_pairs(self, n_matches: int) -> List[Tuple[Hypothesis, Hypothesis]]:
+        """ Chọn các cặp giả thuyết phù hợp để so sánh với đầu vào là số trận đấu mong muốn. """
         active = self.memory.get_active_hypotheses()
         if len(active) < 2:
             return []
 
-        pairs: List[Tuple[Hypothesis, Hypothesis]] = []
-        by_id = {h.id: h for h in active}
+        pairs: List[Tuple[Hypothesis, Hypothesis]] = []              # Tạo danh sách các cặp giả thuyết để so sánh
+        by_id = {h.id: h for h in active}                            # Tạo từ điển ánh xạ id của giả thuyết đến đối tượng giả thuyết 
 
-        # Ưu tiên ghép theo proximity graph (so sánh nhiều thông tin)
+        # Ưu tiên ghép theo proximity graph (là những cặp gần nhau trong graph-những cặp có độ tương đồng cao)
         for h in active:
+            # [:2] là cách để lấy được hai giá trị đầu tiên của danh sách - hai giả thuyết tương đồng cao
             for neighbor_id, sim in self.memory.neighbors(h.id, min_similarity=0.3)[:2]:
                 if neighbor_id in by_id and len(pairs) < n_matches:
                     pairs.append((h, by_id[neighbor_id]))
 
-        # Bù thêm bằng ghép ngẫu nhiên nếu chưa đủ số trận
+        # Bù thêm bằng ghép ngẫu nhiên nếu chưa đủ số trận 
+        # Tuy nhiên nó sẽ không cần thiết nếu như số lượng giả thuyết lớn và tránh tốn token khi gọi LLM thì khồng cần thiết 
         attempts = 0
         while len(pairs) < n_matches and attempts < n_matches * 5:
             a, b = random.sample(active, 2)
@@ -95,9 +99,10 @@ class RankingAgent(BaseAgent):
         results = await asyncio.gather(*[self._run_match(a, b) for a, b in pairs])
 
         for (a, b), result in zip(pairs, results):
-            a_wins = result.winner_id == a.id
+            a_wins = result.winner_id == a.id                                   # Kiểm tra xem giả thuyết A có thắng hay không
             new_a, new_b = _elo_update(a.elo_rating, b.elo_rating, a_wins)
             a.elo_rating, b.elo_rating = new_a, new_b
+            # Sau khi cập nhật elo rating thì tăng số trận đấu đã chơi của hai giả thuyết
             a.matches_played += 1
             b.matches_played += 1
             self.memory.record_match(result)

@@ -31,6 +31,16 @@ JSON_SCHEMA_HINT_FEEDBACK = """Schema JSON trả về:
 SYSTEM_PROMPT_REPORT = """Bạn là MetaReviewAgent, nhiệm vụ cuối cùng: viết
 một bản "Research Overview" súc tích, chuyên nghiệp, tổng hợp các giả thuyết
 tốt nhất được hệ thống multi-agent tạo ra, kèm lý do và hướng kiểm chứng.
+
+Báo cáo PHẢI có cấu trúc Markdown sau (giữ nguyên các tiêu đề):
+  1. "## Tổng quan nghiên cứu" — bối cảnh + câu hỏi nghiên cứu.
+  2. "## Tổng hợp bài báo nền tảng" — tóm tắt những bài báo thu thập làm
+     grounding: mỗi bài 1-2 câu nêu ý chính, sau đó 1 đoạn tổng hợp xu hướng/
+     lỗ trổng chung của literature. KHÔNG bịa nội dung ngoài abstract đã cho.
+  3. "## Các giả thuyết nổi bật" — trình bày top giả thuyết kèm cơ chế, điểm
+     mạnh/yếu và hướng kiểm chứng.
+  4. "## Kết luận & hướng tiếp theo" — gợi ý nghiên cứu kế tiếp.
+
 Viết bằng tiếng Việt, dùng Markdown."""
 
 
@@ -43,6 +53,29 @@ class MetaReviewAgent(BaseAgent):
             for r in h.reviews:
                 comments.append(f"[{h.id}][{r.review_type}] {r.comments}")
         return "\n".join(comments[-limit:]) if comments else "(chưa có review nào)"
+
+    def _collect_papers(self, limit: int = 20) -> str:
+        """Gom block danh sách paper (làm grounding) để chèn vào prompt báo cáo.
+
+        Sắp xếp theo citation desc (giống retriever), giới hạn `limit` bài để
+        vừa tiết kiệm token vừa đủ bối cảnh cho LLM tổng hợp. Mỗi paper kèm
+        title, năm, citation và abstract (cắt tối đa ~400 ký tự để tránh dài).
+        Trả "(chưa tra cứu paper nào)" nếu pool rỗng.
+        """
+        papers = self.memory.get_papers()  # đã dedup, có thể chưa sort
+        papers.sort(key=lambda p: p.citations, reverse=True)
+        if not papers:
+            return "(chưa tra cứu paper nào — không có phần tổng hợp bài báo)"
+        lines = []
+        for p in papers[:limit]:
+            abstract = (p.abstract or "").strip()
+            if len(abstract) > 400:
+                abstract = abstract[:400].rstrip() + "…"
+            lines.append(
+                f"- [{p.id}] (năm {p.year or '?'}, {p.citations} trích dẫn) {p.title}\n"
+                f"  Tóm tắt: {abstract or '(không có abstract)'}"
+            )
+        return f"Tổng cộng {len(papers)} bài báo; sau đây là {min(len(papers), limit)} bài nhiều trích dẫn nhất:\n" + "\n".join(lines)
 
     async def run_feedback(self) -> Dict[str, str]:
         """Chạy sau Pha 2 / cuối mỗi iteration: sinh phản hồi cho các agent."""
@@ -75,10 +108,12 @@ class MetaReviewAgent(BaseAgent):
 
         user = (
             f"Mục tiêu nghiên cứu: {self.memory.research_goal}\n\n"
+            f"Bài báo thu thập làm grounding (dùng cho mục 'Tổng hợp bài báo nền tảng'):\n"
+            f"{self._collect_papers()}\n\n"
             f"Top {top_k} giả thuyết sau {self.memory.iteration} vòng lặp:\n{top_summary}\n\n"
             f"Các mẫu hình phản biện quan sát được qua các vòng:\n"
             + "\n".join(f"- {n}" for n in self.memory.meta_review_notes[-10:])
-            + "\n\nHãy viết Research Overview hoàn chỉnh."
+            + "\n\nHãy viết Research Overview hoàn chỉnh theo đúng cấu trúc tiêu đề đã nêu."
         )
         report = await self.llm.complete(SYSTEM_PROMPT_REPORT, user, max_tokens=3000)
         return report

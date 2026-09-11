@@ -49,6 +49,30 @@ class LLMClient:
             for attempt in range(self.config.max_retries):
                 try:
                     # Interface Anthropic tách system ra khỏi messages.
+                    # CHỈ giữ các param mà messages.create thực sự chấp nhận, phần còn lại
+                    # (temperature, top_p, top_k, reasoning_effort, ...) gửi qua extra_body.
+                    # Lý do: SDK anthropic 1.5.0 (và proxy GLM/boltz) KHÔNG có tham số
+                    # `temperature` trong signature AsyncMessages.create -> truyền trực tiếp
+                    # sẽ raise TypeError: unexpected keyword argument 'temperature',
+                    # bị bắt bởi `except Exception` và retry 3 lần vô nghĩa tới
+                    # "Model call thất bại sau 3 lần". Đây chính là lỗi query expansion đã gặp.
+                    extra_body: dict = {}
+                    # Tham số tuỳ chọn sampling gửi qua extra_body (an toàn với mọi phiên bản SDK
+                    # và mọi proxy; nếu server bỏ qua thì cũng không lỗi).
+                    sampling = {
+                        "temperature": temperature if temperature is not None else self.config.temperature,
+                    }
+                    for k_out, v_in in (("top_p", getattr(self.config, "top_p", None)),
+                                       ("top_k", getattr(self.config, "top_k", None))):
+                        if v_in is not None:
+                            sampling[k_out] = v_in
+                    extra_body.update(sampling)
+
+                    # reasoning_effort (GLM/reasoning model) cũng đi qua extra_body.
+                    reasoning_effort = getattr(self.config, "reasoning_effort", None)
+                    if reasoning_effort:
+                        extra_body["reasoning_effort"] = reasoning_effort
+
                     kwargs = {
                         "model": self.config.model,
                         "system": system,
@@ -56,13 +80,9 @@ class LLMClient:
                             {"role": "user", "content": user}
                         ],
                         "max_tokens": max_tokens or self.config.max_tokens,
-                        "temperature": temperature if temperature is not None else self.config.temperature,
                     }
-
-                    # Dưới đây là 
-                    reasoning_effort = getattr(self.config, "reasoning_effort", None)
-                    if reasoning_effort:
-                        kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
+                    if extra_body:
+                        kwargs["extra_body"] = extra_body
 
                     resp = await self._client.messages.create(**kwargs)
                     # Anthropic trả về content là danh sách các block; gộp text lại.
@@ -81,6 +101,11 @@ class LLMClient:
                         f"Lỗi request 400/404 (kiểm tra base_url={base_url} "
                         f"và model {self.config.model}): {e}"
                     )
+                except TypeError as e:
+                    # Lỗi do thừa/thiếu tham số trong khi build request (vd: SDK/proxy
+                    # không chấp nhận tham số nào đó) -> KHÔNG retry, raise ngay để
+                    # thông báo lỗi chính xác, tránh "thất bại sau 3 lần" gây hiểu nhầm.
+                    raise RuntimeError(f"Lỗi tham số request (không retry được): {e}")
                 except RateLimitError as e:
                     last_err = e
                     await asyncio.sleep(min(2 ** attempt, 20))

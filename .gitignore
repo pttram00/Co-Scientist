@@ -1,5 +1,7 @@
 # Môi trường ảo / đã biên dịch
 venv/
+.venv/
+
 __pycache__/
 *.pyc
 *.pyo

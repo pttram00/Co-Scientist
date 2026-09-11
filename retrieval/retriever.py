@@ -124,7 +124,16 @@ class Retriever:
             "max_results": k,
             "sortBy": "relevance",
         }
-        resp = await self._get("http://export.arxiv.org/api/query", params)
+        try:
+            resp = await self._get("http://export.arxiv.org/api/query", params)
+        except Exception as e:
+            logger.error(
+                "arXiv failed | query = %s | error = %s",
+                query,
+                e
+            )
+            raise
+
         if not resp:
             return []
         papers: List[Paper] = []
@@ -171,7 +180,16 @@ class Retriever:
         headers = {}
         if self.config.semantic_scholar_api_key:
             headers["x-api-key"] = self.config.semantic_scholar_api_key
-        resp = await self._get(url, params, headers=headers)
+        try:
+            resp = await self._get(url, params, headers=headers)
+        except Exception as e:
+            logger.error(
+                "Semantic-Scholar failed | query = %s | error = %s", 
+                query,
+                e
+            )
+            raise
+
         if not resp:
             return []
         try:
@@ -210,7 +228,15 @@ class Retriever:
         }
         if self.config.openalex_mailto:
             params["mailto"] = self.config.openalex_mailto
-        resp = await self._get(url, params)
+        try:
+            resp = await self._get(url, params)
+        except Exception as e:
+            logger.error(
+                "OpenAlex failed | query = %s | error = %s",
+                query,
+                e
+            )
+            raise
         if not resp:
             return []
         try:

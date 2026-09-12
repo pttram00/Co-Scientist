@@ -194,8 +194,11 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
             continue
         if line == "/rebuild":
             print("Đang build lại index...")
-            store = _rebuild_store(memory, store_path, report_path, model_name)
-            print(f"✓ Rebuild xong: {store.size} chunk.")
+            try:
+                store = _rebuild_store(memory, store_path, report_path, model_name)
+                print(f"✓ Rebuild xong: {store.size} chunk.")
+            except Exception as e:
+                print(f"Lỗi rebuild index: {e}")
             continue
         if line.startswith("/ask "):
             query = line[len("/ask "):].strip()
@@ -219,17 +222,23 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
             continue
 
         if intent.kind == "new":
-            new_mem, new_store = await _handle_new(
-                intent, config, state_path, report_path, store_path, model_name)
-            if new_mem is not None:
-                memory, store = new_mem, new_store
+            try:
+                new_mem, new_store = await _handle_new(
+                    intent, config, state_path, report_path, store_path, model_name)
+                if new_mem is not None:
+                    memory, store = new_mem, new_store
+            except Exception as e:
+                print(f"Lỗi khi tạo hướng mới: {e}")
             continue
 
         if intent.kind in ("review", "rerun"):
-            new_store = await _handle_review_or_rerun(
-                intent, config, memory, llm, state_path, report_path, store_path, model_name)
-            if new_store is not None:
-                store = new_store
+            try:
+                new_store = await _handle_review_or_rerun(
+                    intent, config, memory, llm, state_path, report_path, store_path, model_name)
+                if new_store is not None:
+                    store = new_store
+            except Exception as e:
+                print(f"Lỗi khi xử lý nhận xét/rerun: {e}")
             continue
 
         if intent.kind == "question":

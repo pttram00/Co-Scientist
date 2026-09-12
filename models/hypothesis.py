@@ -1,11 +1,29 @@
-"""Data model cho giả thuyết khoa học và các đánh giá gắn liền."""
+
+"""
+Gồm 4 phần chính
+├── HypothesisStatus
+│   └── Trạng thái của giả thuyết
+
+├── GenerationStrategy
+│   └── Cách tạo ra giả thuyết
+
+├── Review
+│   └── Đánh giá giả thuyết
+
+├── MatchResult
+│   └── Kết quả so sánh 2 giả thuyết
+
+└── Hypothesis
+    └── Đối tượng giả thuyết chính
+
+"""
 from __future__ import annotations
 
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
-from typing import List, Optional
+import uuid          # Tạo ID duy nhất cho mỗi giả thuyết
+from dataclasses import dataclass, field    # Tạo class dữ liệu nhanh, giảm code khởi tạo
+from datetime import datetime, timezone   # Lưu thời gian
+from enum import Enum         # Tạo danh sách giá trị enum
+from typing import List, Optional    # Khai báo kiểu dữ liệu
 
 
 class HypothesisStatus(str, Enum):

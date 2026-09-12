@@ -1,54 +1,110 @@
 """Pha 1 — ProximityAgent: đo độ tương đồng giữa các giả thuyết, dựng đồ thị
 proximity, gắn cờ trùng lặp để các pha sau (Ranking, Evolution) không lãng
 phí tài nguyên so sánh/cải tiến các giả thuyết gần như giống hệt nhau.
+
+Cách tiếp cận: encode nội dung (content + rationale) mỗi giả thuyết thành
+vector bằng sentence-transformers (local), tính cosine similarity cho mọi
+cặp — thay vì gọi LLM từng cặp như trước. Nhanh, ít chi phí, ổn định hơn.
 """
 from __future__ import annotations
 
 import asyncio
 import itertools
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 from agents.base_agent import BaseAgent
+from config import EmbeddingConfig
 from models.hypothesis import Hypothesis, HypothesisStatus
-
-SYSTEM_PROMPT = """Bạn là ProximityAgent trong hệ thống multi-agent hỗ trợ
-nghiên cứu khoa học. Nhiệm vụ: chấm điểm độ tương đồng NGỮ NGHĨA (không chỉ
-từ ngữ) giữa hai giả thuyết khoa học, dựa trên: cơ chế đề xuất, đối tượng
-nghiên cứu, và cách kiểm chứng. Trả lời bằng JSON."""
-
-JSON_SCHEMA_HINT = """Schema JSON trả về:
-{
-  "similarity": <số thực 0.0-1.0, 1.0 = trùng lặp hoàn toàn về ý tưởng>,
-  "reason": "<giải thích ngắn 1 câu>"
-}"""
 
 
 class ProximityAgent(BaseAgent):
     name = "proximity_agent"
 
-    async def _score_pair(self, a: Hypothesis, b: Hypothesis) -> Tuple[str, str, float]:
-        user = (
-            f"Giả thuyết A: {a.content}\nCơ chế A: {a.rationale}\n\n"
-            f"Giả thuyết B: {b.content}\nCơ chế B: {b.rationale}\n\n"
-            f"{JSON_SCHEMA_HINT}"
-        )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
-        return a.id, b.id, float(data["similarity"])
+    def __init__(self, llm, memory, embedding: Optional[EmbeddingConfig] = None):
+        # embedding ở đây là EmbeddingConfig (không phải LLMClient). Gọi
+        # super().__init__ để set llm/memory; self.embedding sẽ lưu config embedding.
+        super().__init__(llm, memory)
+        self._emb_config: EmbeddingConfig = embedding or EmbeddingConfig()
+        # Lazy-load: chỉ nạp SentenceTransformer khi run() lần đầu, tránh load
+        # torch/sentence-transformers ngay khi merely import module này.
+        self._model: Optional[SentenceTransformer] = None
+        # Cache vector theo hypothesis id: hypothesis cũ xuất hiện lại ở iteration
+        # sau (content không đổi) thì tái dùng vector, chỉ encode hypothesis mới.
+        self._emb_cache: dict[str, np.ndarray] = {}
+
+    @property
+    def model(self) -> SentenceTransformer:
+        """Nạp model sentence-transformer 1 lần (lazy), tái dùng cho mọi lần gọi."""
+        if self._model is None:
+            self._model = SentenceTransformer(
+                self._emb_config.model_name,
+                device=self._emb_config.device,
+            )
+        return self._model
+
+    def _encode_hypotheses(self, active: List[Hypothesis]) -> np.ndarray:
+        """Encode content+rationale của các giả thuyết active thành ma trận (n, d),
+        đã L2-normalize. Có cache theo id để không re-encode hypothesis đã tính.
+        """
+        n = len(active)
+        if n == 0:
+            return np.zeros((0, 0), dtype=np.float32)
+
+        # Tách hypothesis chưa có trong cache -> cần encode mới.
+        texts_to_encode: List[str] = []
+        ids_to_encode: List[str] = []
+        for h in active:
+            if h.id not in self._emb_cache:
+                texts_to_encode.append(f"{h.content}\n{h.rationale}")
+                ids_to_encode.append(h.id)
+
+        # Encode batch các hypothesis mới; trả về mảng (m, d) đã normalize L2.
+        if texts_to_encode:
+            new_vecs = self.model.encode(
+                texts_to_encode,
+                batch_size=self._emb_config.batch_size,
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+            for hid, vec in zip(ids_to_encode, new_vecs):
+                self._emb_cache[hid] = vec.astype(np.float32)
+
+        # Lắp ma trận (n, d) theo thứ tự `active`, lấy vector từ cache.
+        dim = next(iter(self._emb_cache.values())).shape[0]
+        emb = np.zeros((n, dim), dtype=np.float32)
+        for idx, h in enumerate(active):
+            emb[idx] = self._emb_cache[h.id]
+        return emb
 
     async def run(self, duplicate_threshold: float = 0.85) -> List[Tuple[str, str, float]]:
         active = self.memory.get_active_hypotheses()
-        pairs = list(itertools.combinations(active, 2))     # trộn các giả thuyết theo chỉnh hợp 2 để so sánh với nhau 
+        pairs = list(itertools.combinations(active, 2))     # chỉnh hợp C(n,2)
         if not pairs:
             return []
 
-        results = await asyncio.gather(*[self._score_pair(a, b) for a, b in pairs])
+        # Encode (đồng bộ) bọc trong to_thread để không block event loop orchestrator.
+        # Tính luôn ma trận similarity trong cùng thread: emb @ emb.T = cosine (đã normalize).
+        def _compute():
+            emb = self._encode_hypotheses(active)
+            return emb @ emb.T
 
-        for id_a, id_b, sim in results:
-            self.memory.set_proximity(id_a, id_b, sim)
+        sim_matrix = await asyncio.to_thread(_compute)
+
+        results: List[Tuple[str, str, float]] = []
+        n = len(active)
+        for i, j in itertools.combinations(range(n), 2):
+            ha, hb = active[i], active[j]
+            # Cosine ∈ [-1, 1]; với text embedding thường dương. Clip về [0, 1] cho
+            # an toàn với duplicate_threshold (chỉ quan tâm tương đồng dương mạnh).
+            sim = float(max(0.0, sim_matrix[i, j]))
+            results.append((ha.id, hb.id, sim))
+            self.memory.set_proximity(ha.id, hb.id, sim)
             if sim >= duplicate_threshold:
-                # giữ lại giả thuyết có elo cao hơn (hoặc mới hơn nếu bằng nhau),
-                # đánh dấu bản còn lại là trùng lặp để loại khỏi tournament/evolution
-                ha, hb = self.memory.hypotheses[id_a], self.memory.hypotheses[id_b]
+                # Giữ lại giả thuyết có elo cao hơn (hoặc bằng), đánh dấu bản còn lại
+                # là trùng lặp để loại khỏi tournament/evolution.
                 loser = hb if ha.elo_rating >= hb.elo_rating else ha
                 if loser.status == HypothesisStatus.ACTIVE:
                     self.memory.mark_status(loser.id, HypothesisStatus.DUPLICATE)

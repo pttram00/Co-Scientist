@@ -32,7 +32,7 @@ class Orchestrator:
         # 1 instance / agent, dùng chung memory + llm client trong suốt vòng đời.
         # GenerationAgent cần thêm retriever để tra cứu paper làm grounding.
         self.generation_agent = GenerationAgent(self.llm, self.memory, self.retriever, self.config.retriever)
-        self.proximity_agent = ProximityAgent(self.llm, self.memory)
+        self.proximity_agent = ProximityAgent(self.llm, self.memory, self.config.embedding)
         self.reflection_agent = ReflectionAgent(self.llm, self.memory)
         self.ranking_agent = RankingAgent(self.llm, self.memory)
         self.evolution_agent = EvolutionAgent(self.llm, self.memory)

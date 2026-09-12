@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 @dataclass
 class LLMConfig:
-    model: str = "glm-5.2"
+    model: str = "GLM-5.2"
     max_tokens: int = 2000
     temperature: float = 0.7
     api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_AUTH_TOKEN", ""))
@@ -57,8 +57,19 @@ class OrchestratorConfig:
 
 
 @dataclass
+class EmbeddingConfig:
+    # Cấu hình cho sentence embedding dùng trong ProximityAgent (cosine similarity).
+    # Model chạy local qua sentence-transformers; lần đầu dùng sẽ auto-download về
+    # cache HuggingFace (~/.cache/huggingface).
+    model_name: str = "all-MiniLM-L6-v2"        # 384-dim, nhẹ, đủ tốt cho similarity câu ngắn
+    device: str = "cpu"                          # "cpu" | "cuda" — cpu an toàn mặc định
+    batch_size: int = 32                         # số câu encode cùng lúc trong 1 batch
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
  

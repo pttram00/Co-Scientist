@@ -65,7 +65,7 @@ async def add_user_comment(
     raw_input: str,
     state_path: str,
 ) -> str:
-    """Xử lý 1 dòng comment của user. Trả thông báo kết quả (chuỗi tiếng Việt)."""
+    """Xử lý 1 dòng comment của user (cú pháp <id> <text>). Trả thông báo tiếng Việt."""
     parsed = parse_comment(raw_input)
     if not parsed:
         return ("Cú pháp comment: <id> <nội dung>. Ví dụ: <a1> cơ chế chưa thuyết phục.")
@@ -80,12 +80,55 @@ async def add_user_comment(
         hint = f" (có ý gần: {', '.join(near[:3])})" if near else ""
         return f"Không tìm thấy giả thuyết id '{hid}'.{hint}"
 
+    return await add_review_comment(memory, llm, hid, comment_text, state_path)
+
+
+async def add_review_comment(
+    memory: ContextMemory,
+    llm: LLMClient,
+    hypothesis_id: str,
+    comment_text: str,
+    state_path: str,
+) -> str:
+    """Gắn nhận xét vào 1 giả thuyết (đã biết id + text, không cần parse). Dùng khi
+    intent classifier đã xác định target_hypothesis_id + comment_text."""
+    if hypothesis_id not in memory.hypotheses:
+        return f"Không tìm thấy giả thuyết id '{hypothesis_id}'."
+    if not comment_text:
+        return "Nội dung nhận xét trống."
+
     scores = await _score_comment(llm, comment_text)
-    memory.add_user_review(hid, comment_text, scores)
+    memory.add_user_review(hypothesis_id, comment_text, scores)
     memory.save(state_path)
     return (
-        f"✓ Đã ghi nhận xét vào [{hid}] — điểm chấm: "
+        f"✓ Đã ghi nhận xét vào [{hypothesis_id}] — điểm chấm: "
         f"correctness {scores['correctness']:.1f}/novelty {scores['novelty']:.1f}"
         f"/feasibility {scores['feasibility']:.1f}. "
         f"Sẽ ảnh hưởng Reflection/Ranking/Evolution ở vòng sau."
+    )
+
+
+async def add_agent_feedback_comment(
+    memory: ContextMemory,
+    agent_name: str,
+    comment_text: str,
+    state_path: str,
+) -> str:
+    """Gắn nhận xét của user vào agent (memory.agent_feedback[agent_name]). Không
+    cần chấm điểm — chỉ text, để agent đó đọc ở lần chạy sau qua feedback_block().
+    agent_name chuẩn hoá: khớp tên bước hợp lệ (generation/proximity/reflection/
+    ranking/evolution/meta_review)."""
+    valid = ["generation", "proximity", "reflection", "ranking", "evolution", "meta_review"]
+    head = (agent_name or "").lower()
+    head = next((s for s in valid if s == head or s in head), None)
+    if not head:
+        return f"Agent '{agent_name}' không hợp lệ. Hợp lệ: {', '.join(valid)}."
+    if not comment_text:
+        return "Nội dung nhận xét trống."
+
+    memory.add_agent_feedback(head, f"[user] {comment_text}")
+    memory.save(state_path)
+    return (
+        f"✓ Đã ghi nhận xét vào agent '{head}'. Agent này sẽ đọc nhận xét của bạn "
+        f"ở lần chạy lại kế tiếp (qua feedback_block)."
     )

@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 @dataclass
 class LLMConfig:
-    model: str = "glm-5.2"
+    model: str = "GLM-5.2"
     max_tokens: int = 2000
     temperature: float = 0.7
     api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_AUTH_TOKEN", ""))
@@ -57,8 +57,20 @@ class OrchestratorConfig:
 
 
 @dataclass
+class ChatbotConfig:
+    # Model embedding local (đa ngữ, có tiếng Việt). Proxy boltz KHÔNG có
+    # /v1/embeddings nên phải dùng model local chứ không gọi GLM qua API.
+    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    top_k: int = 5                              # số chunk truy xuất / câu hỏi
+    vector_store_path: str = "output/vectors.json"
+    state_path: str = "output/state.json"
+    report_path: str = "output/final_report.md"
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    chatbot: ChatbotConfig = field(default_factory=ChatbotConfig)
  

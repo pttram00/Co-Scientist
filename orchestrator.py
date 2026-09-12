@@ -38,6 +38,24 @@ class Orchestrator:
         self.evolution_agent = EvolutionAgent(self.llm, self.memory)
         self.meta_review_agent = MetaReviewAgent(self.llm, self.memory)
 
+    @classmethod
+    def from_memory(cls, memory: ContextMemory, config: Optional[AppConfig] = None) -> "Orchestrator":
+        """Tạo Orchestrator từ ContextMemory đã có (resume). Dùng cho chatbot khi
+        user yêu cầu chạy thêm iteration từ state.json đã load — không mất dữ liệu."""
+        cfg = config or AppConfig()
+        orch = cls.__new__(cls)             # tránh __init__ tạo memory/lparam mới
+        orch.config = cfg
+        orch.memory = memory
+        orch.llm = LLMClient(cfg.llm)
+        orch.retriever = Retriever(cfg.retriever)
+        orch.generation_agent = GenerationAgent(orch.llm, memory, orch.retriever, cfg.retriever)
+        orch.proximity_agent = ProximityAgent(orch.llm, memory)
+        orch.reflection_agent = ReflectionAgent(orch.llm, memory)
+        orch.ranking_agent = RankingAgent(orch.llm, memory)
+        orch.evolution_agent = EvolutionAgent(orch.llm, memory)
+        orch.meta_review_agent = MetaReviewAgent(orch.llm, memory)
+        return orch
+
     async def run_phase_1(self):
         """Pha 1: sinh giả thuyết + lọc trùng lặp."""
         logger.info("Pha 1 — Generation & Proximity (iteration %d)", self.memory.iteration)
@@ -95,4 +113,20 @@ class Orchestrator:
             return str(report_path)
         finally:
             # Đóng httpx client của retriever để không leak connection pool.
+            await self.retriever.aclose()
+
+    async def run_iterations(self, n: int, state_path: str) -> None:
+        """Chạy thêm n iteration từ iteration hiện tại (resume). Dùng cho chatbot.
+        Không sinh lại final_report — chatbot tự rebuild index sau."""
+        out_dir = Path(state_path).parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for _ in range(n):
+                self.memory.iteration += 1
+                logger.info("=== Resume iteration %d ===", self.memory.iteration)
+                await self.run_phase_1()
+                await self.run_phase_2()
+                await self.run_phase_3()
+                self.memory.save(state_path)
+        finally:
             await self.retriever.aclose()

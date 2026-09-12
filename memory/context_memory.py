@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from models.hypothesis import Hypothesis, HypothesisStatus, MatchResult
+from models.hypothesis import Hypothesis, HypothesisStatus, MatchResult, Review
 from models.paper import Paper
 
 
@@ -16,12 +16,11 @@ class ContextMemory:
     def __init__(self, research_goal: str, constraints: Optional[str] = None):
         self.research_goal = research_goal
         self.constraints = constraints or ""
-        self.hypotheses: Dict[str, Hypothesis] = {}             # Nơi lưu trữ các giả thuyết tạo ra trong quá trình nghiên cứu
-        # proximity_graph[id] = list of (other_id, similarity 0-1)
-        self.proximity_graph: Dict[str, List[Tuple[str, float]]] = {}
-        self.match_history: List[MatchResult] = []
-        self.meta_review_notes: List[str] = []
-        self.agent_feedback: Dict[str, List[str]] = {}  # feedback cho từng agent
+        self.hypotheses: Dict[str, Hypothesis] = {}                             # Nơi lưu trữ các giả thuyết tạo ra trong quá trình nghiên cứu
+        self.proximity_graph: Dict[str, List[Tuple[str, float]]] = {}           # Nơi lưu mức độ tương đồng của các giả thuyết - có một list với mỗi tuple có dạng (giả thuyết, độ tương đồng)
+        self.match_history: List[MatchResult] = []                              # Nơi lưu lại kết quả của các trận đấu giữa hai giả thuyết
+        self.meta_review_notes: List[str] = []                                  # Nơi lưu lại các nhận xét của meta_reviewer về các giả thuyết trong bộ nhớ
+        self.agent_feedback: Dict[str, List[str]] = {}                          # feedback cho từng agent
         self.iteration: int = 0
         # Pool bài báo tra cứu làm grounding; GenerationAgent cache vào đây để
         # các iteration sau không phải retrieve lại (giảm lãng phí + ổn định ngữ cảnh).
@@ -45,6 +44,23 @@ class ContextMemory:
         """ Cập nhật trạng thái cho một giả thuyết """
         if hypothesis_id in self.hypotheses:
             self.hypotheses[hypothesis_id].status = status
+
+    def add_user_review(self, hypothesis_id: str, comments: str, scores: dict) -> None:
+        """
+        Thêm một review từ user vào một giả thuyết trong bộ nhớ.
+        Nếu giả thuyết không tồn tại trong bộ nhớ thì raise KeyError.
+        """
+        if hypothesis_id not in self.hypotheses:
+            raise KeyError(f"Không có hypothesis {hypothesis_id}")
+        r = Review(
+            reviewer="user",
+            review_type="user_comment",
+            correctness=float(scores.get("correctness", 5.0)),
+            novelty=float(scores.get("novelty", 5.0)),
+            feasibility=float(scores.get("feasibility", 5.0)),
+            comments=comments,
+        )
+        self.hypotheses[hypothesis_id].reviews.append(r)
 
     # ---------- Paper pool (grounding) ----------
     def add_paper(self, papers: List[Paper]) -> None:

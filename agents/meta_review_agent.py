@@ -48,6 +48,10 @@ class MetaReviewAgent(BaseAgent):
     name = "meta_review_agent"
 
     def _collect_comments(self, limit: int = 40) -> str:
+        """
+        Thu thập các nhận xét phản biện gần đây nhất của tất cả các giả thuyết. 
+        Với đầu vào là limit - nó là số lượng nhận xét phản biện gần đây nhất muốn thu thập. 
+        """
         comments = []
         for h in self.memory.hypotheses.values():
             for r in h.reviews:
@@ -78,7 +82,11 @@ class MetaReviewAgent(BaseAgent):
         return f"Tổng cộng {len(papers)} bài báo; sau đây là {min(len(papers), limit)} bài nhiều trích dẫn nhất:\n" + "\n".join(lines)
 
     async def run_feedback(self) -> Dict[str, str]:
-        """Chạy sau Pha 2 / cuối mỗi iteration: sinh phản hồi cho các agent."""
+        """
+        Thu thập các nhận xét phản biện gần và đưa ra phản hồi cải thiện cho cấc agent khác.
+        Và thêm các mẫu hình phản biện quan sát được vào meta_review_notes trong bộ nhớ
+
+        """
         user = (
             f"Mục tiêu nghiên cứu: {self.memory.research_goal}\n\n"
             f"Các nhận xét phản biện tích luỹ gần đây:\n{self._collect_comments()}\n\n"
@@ -94,6 +102,8 @@ class MetaReviewAgent(BaseAgent):
         return feedback
 
     async def run_final_report(self, top_k: int = 5) -> str:
+        """
+        Sinh báo cáo tổng quan nghiên cứu (research overview) dựa trên top-k giả thuyết tôt nhất """
         top: List[Hypothesis] = self.memory.get_top_k(top_k)
         lines = []
         for h in top:

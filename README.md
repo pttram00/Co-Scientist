@@ -1,3 +1,4 @@
+
 # Research Co-Scientist
 
 Research Co-Scientist là một framework đa tác tử (multi-agent) dùng để sinh, phản biện và cải tiến giả thuyết nghiên cứu khoa học theo chu trình có cấu trúc. Dự án được xây dựng theo mô hình điều phối một Orchestrator và nhiều agent chuyên biệt, tất cả chia sẻ cùng một bộ nhớ ngữ cảnh để duy trì trạng thái của cả hệ thống.

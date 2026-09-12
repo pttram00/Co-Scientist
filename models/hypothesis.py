@@ -79,6 +79,9 @@ class Hypothesis:
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def average_score(self, key: str) -> float:
+        """ Tính điểm trung bình của một giả thuyết theo tiêu chí correctness/novelty/feasibility(tính đúng đắn/tính mới/khả năng kiểm chứng)"""
+        # để tính được thì ở đây ta lấy tất cả các review của giả thuyết và lấy giá trị của key tương ứng 
+        # ví dụ: nếu key là "correctness" thì ta lấy tất cả các giá trị đó của các review và tính trung bình
         vals = [getattr(r, key) for r in self.reviews]
         return sum(vals) / len(vals) if vals else 0.0
 

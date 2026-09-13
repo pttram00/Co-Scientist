@@ -170,15 +170,21 @@ class Orchestrator:
     # -------------------------------------------------- chạy full iteration
     async def run_full(self, n_iterations: Optional[int] = None,
                        state_path: str = "output/state.json",
-                       report_path: str = "output/final_report.md") -> str:
+                       report_path: str = "output/final_report.md",
+                       start_iteration: Optional[int] = None) -> str:
         """Chạy n vòng lặp (mỗi vòng = 6 bước theo STEP_ORDER), tăng iteration,
-        save sau mỗi vòng, cuối sinh final_report. Dùng cho luồng 'new'."""
+        save sau mỗi vòng, cuối sinh final_report.
+
+        start_iteration: iteration bắt đầu đếm. None (mặc định) → i+1 (luồng
+        new_topic / batch mode cũ). Resume_newfinal truyền `memory.iteration`
+        hiện tại để chạy tiếp đúng số (vd đang iteration 2 → chạy thêm 1 vòng
+        thành iteration 3, không reset về 1)."""
         n = n_iterations if n_iterations is not None else self.config.orchestrator.n_iterations
         Path(state_path).parent.mkdir(parents=True, exist_ok=True)
         try:
             for i in range(n):
-                self.memory.iteration = i + 1
-                logger.info("=== Iteration %d/%d ===", i + 1, n)
+                self.memory.iteration = (start_iteration + i) if start_iteration else (i + 1)
+                logger.info("=== Iteration %d/%d ===", self.memory.iteration, n)
                 for step in STEP_ORDER:
                     await self.run_step(step, overwrite=False)  # full run: append, không xoá
                 self.memory.save(state_path)

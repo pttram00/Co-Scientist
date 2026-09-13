@@ -39,11 +39,14 @@ Lệnh g RawQuery (không qua LLM):
   /quit            Thoát
 
 Hoặc gõ câu tự nhiên:
-  - "Tôi muốn nghiên cứu về enzymeX"    → tạo hướng mới
-  - "Giả thuyết a1 cơ chế chưa chắc"     → nhận xét vào a1
-  - "Reflection chấm sai, chạy lại"     → nhận xét + rerun Reflection
-  - "Chạy lại Ranking"                   → rerun Ranking
-  - "Báo cáo có bao nhiêu giả thuyết?"  → hỏi RAG
+  - "Tôi muốn nghiên cứu về enzymeX"        → đổi chủ đề (reset + chạy mới)
+  - "đổi chủ đề sang proteinY"              → đổi chủ đề (reset + chạy mới)
+  - "tạo lại giả thuyết dựa trên nhận xét"  → chạy tiếp để ra final mới (giữ data)
+  - "Giả thuyết a1 cơ chế chưa chắc"        → nhận xét vào a1
+  - "Reflection chấm sai, chạy lại"        → nhận xét + rerun Reflection
+  - "có 2 ý tưởng giống nhau quá"          → nhận xét vào proximity (gợi ý rerun)
+  - "Chạy lại Ranking"                      → rerun Ranking
+  - "Báo cáo có bao nhiêu giả thuyết?"     → hỏi RAG
 """
 
 
@@ -113,15 +116,15 @@ def _new_session_prompt(intent: IntentResult) -> tuple[str, str]:
     return goal, constraints
 
 
-async def _handle_new(intent: IntentResult, config: AppConfig,
-                       state_path: str, report_path: str, store_path: str,
-                       model_name: str) -> tuple[ContextMemory, VectorStore]:
-    """Luồng 'new': hỏi goal/constraints → chạy full iteration → rebuild index."""
+async def _handle_new_topic(intent: IntentResult, config: AppConfig,
+                              state_path: str, report_path: str, store_path: str,
+                              model_name: str) -> tuple[ContextMemory, VectorStore]:
+    """Luồng 'new_topic': đổi chủ đề → reset memory → chạy full iteration → rebuild."""
     goal, constraints = _new_session_prompt(intent)
     if not goal:
         print("  Mục tiêu trống — huỷ tạo mới.")
         return None, None
-    print(f"Đang chạy hệ thống cho mục tiêu: {goal} ...")
+    print(f"Đang chạy hệ thống cho mục tiêu: {goal} (reset dữ liệu cũ) ...")
     orch = Orchestrator.for_new(goal, constraints, config=config)
     await orch.run_full(config.orchestrator.n_iterations,
                         state_path=state_path, report_path=report_path)
@@ -131,11 +134,36 @@ async def _handle_new(intent: IntentResult, config: AppConfig,
     return memory, store
 
 
+async def _handle_resume_newfinal(intent: IntentResult, config: AppConfig,
+                                    memory: ContextMemory,
+                                    state_path: str, report_path: str,
+                                    store_path: str, model_name: str) -> tuple[ContextMemory, VectorStore]:
+    """Luồng 'resume_newfinal': tiếp tục trên state hiện có (KHÔNG reset) → chạy
+    thêm iteration để ra final_report mới, tận dụng dữ liệu phiên trước. Dùng
+    memory hiện tại của REPL, kèm start_iteration để chạy tiếp đúng số vòng."""
+    ans = input(f"Chạy thêm bao nhiêu iteration? [mặc định 1]: ").strip()
+    n = int(ans) if ans.isdigit() else 1
+    start_it = memory.iteration
+    print(f"Đang chạy thêm {n} iteration (từ iteration {start_it + 1}) để ra final mới ...")
+    orch = Orchestrator(memory, config=config)   # giữ memory hiện tại, KHÔNG reset
+    try:
+        await orch.run_full(n_iterations=n, state_path=state_path,
+                            report_path=report_path, start_iteration=start_it + 1)
+    finally:
+        pass  # run_self.aclose() trong run_full; memory đối tượng dùng chung.
+    memory2 = ContextMemory.load(state_path)
+    store = _rebuild_store(memory2, store_path, report_path, model_name)
+    print(f"✓ Xong. iteration hiện tại: {memory2.iteration}, index rebuild ({store.size} chunk).")
+    return memory2, store
+
+
 async def _handle_review_or_rerun(intent: IntentResult, config: AppConfig,
                                    memory: ContextMemory, llm: LLMClient,
                                    state_path: str, report_path: str,
                                    store_path: str, model_name: str) -> VectorStore:
-    """Luồng 'review' / 'rerun': gắn comment (nếu có) + rerun_step (nếu có)."""
+    """Luồng 'review' / 'rerun': gắn comment (nếu có) + rerun_step (nếu có).
+    Khi user nhận xét về 1 agent (target_agent) mà không yêu cầu rerun_step,
+    in gợi ý user có thể gõ /run <agent> để chạy lại — KHÔNG tự chạy."""
     # 1) Gắn comment tuỳ ngữ nghĩa.
     if intent.comment_text:
         if intent.target_agent:
@@ -159,6 +187,12 @@ async def _handle_review_or_rerun(intent: IntentResult, config: AppConfig,
         store = _rebuild_store(memory, store_path, report_path, model_name)
         print(f"  (index rebuild: {store.size} chunk)")
         return store
+
+    # 3) Gợi ý rerun nếu user nhận xét về agent mà không yêu cầu rerun.
+    if intent.target_agent and not intent.rerun_step:
+        print(f"  💡 Bạn có thể gõ \"/run {intent.target_agent}\" để chạy lại "
+              f"agent này (sẽ hỏi keep/overwrite).")
+
     return None
 
 
@@ -221,14 +255,24 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
             print(f"Lỗi classify: {e}")
             continue
 
-        if intent.kind == "new":
+        if intent.kind == "new_topic":
             try:
-                new_mem, new_store = await _handle_new(
+                new_mem, new_store = await _handle_new_topic(
                     intent, config, state_path, report_path, store_path, model_name)
                 if new_mem is not None:
                     memory, store = new_mem, new_store
             except Exception as e:
-                print(f"Lỗi khi tạo hướng mới: {e}")
+                print(f"Lỗi khi tạo chủ đề mới: {e}")
+            continue
+
+        if intent.kind == "resume_newfinal":
+            try:
+                new_mem, new_store = await _handle_resume_newfinal(
+                    intent, config, memory, state_path, report_path, store_path, model_name)
+                if new_mem is not None:
+                    memory, store = new_mem, new_store
+            except Exception as e:
+                print(f"Lỗi khi chạy tiếp để ra final mới: {e}")
             continue
 
         if intent.kind in ("review", "rerun"):

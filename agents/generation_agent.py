@@ -6,7 +6,15 @@ Mục tiêu:
     đó mới đề xuất. Paper được cache vào memory.papers để tái dùng ở các
     iteration sau (không retrieve lại).
 
+Chịu trách nhiệm:
+    hiểu mục tiêu nghiên cứu
+    quyết định cần tìm paper không
+    chọn paper nào
+    gọi LLM tạo hypothesis
+    lưu kết quả
+
 Luồng tổng quan:
+
     GenerationAgent.run(n)
     |___ (chỉ khi memory.papers chưa đủ: < min_papers_for_grounding)
     |     |___ query_expansion(): research_goal+constraints -> 3-5 query  (LLM, 1 call)

@@ -16,7 +16,7 @@ class ContextMemory:
     def __init__(self, research_goal: str, constraints: Optional[str] = None):
         self.research_goal = research_goal
         self.constraints = constraints or ""
-        self.hypotheses: Dict[str, Hypothesis] = {}
+        self.hypotheses: Dict[str, Hypothesis] = {}             # Nơi lưu trữ các giả thuyết tạo ra trong quá trình nghiên cứu
         # proximity_graph[id][other_id] = similarity 0-1 (đối xứng). Dùng dict thay cho
         # list để ghi lại 1 cạnh không tạo bản ghi trùng và kiểm tra "đã tính chưa" O(1).
         self.proximity_graph: Dict[str, Dict[str, float]] = {}
@@ -77,7 +77,7 @@ class ContextMemory:
         self.proximity_graph.setdefault(id_b, {})[id_a] = similarity
 
     def has_proximity(self, id_a: str, id_b: str) -> bool:
-        """ Cặp này đã được chấm độ tương đồng chưa (để ProximityAgent không tính lại). """
+        """ Cặp này đã được tính độ tương đồng chưa (để ProximityAgent không tính lại). """
         return id_b in self.proximity_graph.get(id_a, {})
 
     def neighbors(self, hypothesis_id: str, min_similarity: float = 0.0) -> List[Tuple[str, float]]:

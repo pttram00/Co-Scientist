@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 @dataclass
 class LLMConfig:
-    model: str = "glm-5.2"
+    model: str = "GLM-5.2"
     max_tokens: int = 2000
     temperature: float = 0.7
     api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_AUTH_TOKEN", ""))
@@ -33,6 +33,7 @@ class RetrieverConfig:
     # Số paper tối đa truyền vào 1 prompt (_select_papers_llm).
     papers_per_strategy: int = 7
     # Semantic Scholar API key (tùy chọn; trống -> rate limit thấp hơn nhưng vẫn dùng được).
+    # Chỉ đọc từ .env / biến môi trường — KHÔNG ghi key thật vào code (code được push lên GitHub).
     semantic_scholar_api_key: str = field(
         default_factory=lambda: os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
     )
@@ -59,11 +60,25 @@ class OrchestratorConfig:
     hypotheses_per_iteration: int = 6          # số giả thuyết Generation sinh mỗi vòng
     matches_per_iteration: int = 10             # số trận đấu Ranking chạy mỗi vòng
     top_k_for_evolution: int = 4                # số giả thuyết top được Evolution cải tiến
-    proximity_duplicate_threshold: float = 0.85  # ngưỡng coi là trùng lặp
-    # Số cặp tối đa ProximityAgent chấm bằng LLM mỗi lượt. Cặp đã chấm được cache; khi
-    # số cặp mới vượt ngưỡng, ưu tiên cặp có độ trùng từ vựng cao (khả năng trùng lặp cao).
-    proximity_max_pairs_per_iteration: int = 60
+    # Ngưỡng cosine (embedding) để coi 1 cặp là "nghi trùng". Cặp nghi trùng còn phải được
+    # LLM xác nhận mới bị đánh dấu duplicate, nên ngưỡng có thể thấp hơn một chút để ít bỏ sót.
+    # Nên hiệu chỉnh lại bằng một bộ cặp mẫu khi đổi model embedding.
+    proximity_duplicate_threshold: float = 0.80
+    # Số cặp nghi trùng tối đa hỏi LLM mỗi lượt (cặp chưa kịp hỏi sẽ được hỏi ở lượt sau).
+    proximity_max_llm_checks_per_iteration: int = 10
     output_dir: str = "output"
+
+
+@dataclass
+class EmbeddingConfig:
+    # Cấu hình cho sentence embedding dùng trong ProximityAgent (cosine similarity).
+    # Model chạy local qua sentence-transformers; lần đầu dùng sẽ auto-download về
+    # cache HuggingFace (~/.cache/huggingface).
+    # Model đa ngôn ngữ vì giả thuyết viết tiếng Việt (all-MiniLM-L6-v2 chỉ huấn luyện
+    # cho tiếng Anh và tokenizer uncased bỏ dấu tiếng Việt).
+    model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    device: str = "cpu"                          # "cpu" | "cuda" — cpu an toàn mặc định
+    batch_size: int = 32                         # số câu encode cùng lúc trong 1 batch
 
 
 @dataclass
@@ -71,4 +86,4 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
- 
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)

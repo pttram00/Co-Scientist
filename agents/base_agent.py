@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 from llm.client import LLMClient
 from memory.context_memory import ContextMemory
@@ -32,9 +32,12 @@ def truncate(text: str, limit: int) -> str:
 class BaseAgent(ABC):
     name: str = "base_agent"
 
-    def __init__(self, llm: LLMClient, memory: ContextMemory):
+    def __init__(self, llm: LLMClient, memory: ContextMemory, embedding: Optional[object] = None):
         self.llm = llm
         self.memory = memory
+        # embedding: tuỳ chọn (hiện chỉ ProximityAgent dùng — nhận EmbeddingConfig).
+        # Các agent khác không truyền -> mặc định None, không bị vỡ chữ ký.
+        self.embedding = embedding
 
     def feedback_block(self) -> str:
         """Trả về feedback mà MetaReviewAgent đã để lại cho agent này ở vòng

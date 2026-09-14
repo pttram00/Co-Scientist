@@ -5,7 +5,7 @@ import argparse
 import asyncio
 
 from agents.safety_agent import UnsafeResearchGoalError
-from config import AppConfig, LLMConfig, OrchestratorConfig
+from config import AppConfig, EmbeddingConfig, LLMConfig, OrchestratorConfig
 from orchestrator import Orchestrator
 
 
@@ -17,8 +17,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hypotheses-per-iteration", type=int, default=6)
     p.add_argument("--matches-per-iteration", type=int, default=10)
     p.add_argument("--top-k-for-evolution", type=int, default=4)
-    p.add_argument("--proximity-max-pairs", type=int, default=60,
-                   help="Số cặp tối đa ProximityAgent chấm bằng LLM mỗi lượt")
+    p.add_argument("--proximity-max-llm-checks", type=int, default=10,
+                   help="Số cặp nghi trùng tối đa ProximityAgent hỏi LLM xác nhận mỗi lượt")
+    p.add_argument("--embedding-model", default=EmbeddingConfig.model_name,
+                   help="Tên model sentence-transformers dùng cho ProximityAgent")
     p.add_argument("--model", default="GLM-5.2")
     p.add_argument("--output-dir", default="output")
     return p.parse_args()
@@ -33,9 +35,10 @@ async def main():
             hypotheses_per_iteration=args.hypotheses_per_iteration,
             matches_per_iteration=args.matches_per_iteration,
             top_k_for_evolution=args.top_k_for_evolution,
-            proximity_max_pairs_per_iteration=args.proximity_max_pairs,
+            proximity_max_llm_checks_per_iteration=args.proximity_max_llm_checks,
             output_dir=args.output_dir,
         ),
+        embedding=EmbeddingConfig(model_name=args.embedding_model),
     )
     orchestrator = Orchestrator(research_goal=args.goal, constraints=args.constraints, config=config)
     try:

@@ -42,7 +42,8 @@ def _elo_update(rating_a: float, rating_b: float, a_wins: bool) -> Tuple[float, 
     """
     Đoạn này là nơi tính toán Elo rating mới cho 2 giả thuyết sau khi đấu xong
     vì Elo rating ban đầu là giá trị mặc định được truyền vào rating_a và rating_b
-    được quy ước trước(1200) nên có thể bị lệch so với thực tế .
+    được quy ước trước(1200) nên có thể bị lệch so với thực tế.
+    Điểm elo này có thể nói là một giá trị đánh giá tổng hợp về một giả thuyết dựa trên các trận đấu.
     """
     expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
     score_a = 1.0 if a_wins else 0.0
@@ -55,12 +56,13 @@ class RankingAgent(BaseAgent):
     name = "ranking_agent"
 
     def _select_pairs(self, n_matches: int) -> List[Tuple[Hypothesis, Hypothesis]]:
+        """ Chọn các cặp giả thuyết phù hợp để so sánh với đầu vào là số trận đấu mong muốn. """
         # Chỉ giả thuyết đã có full review mới được vào tournament.
         pool = [h for h in self.memory.get_active_hypotheses() if h.is_reviewed]
         if len(pool) < 2:
             return []
 
-        by_id = {h.id: h for h in pool}
+        by_id = {h.id: h for h in pool}      # ánh xạ id -> đối tượng giả thuyết
         pairs: List[Tuple[Hypothesis, Hypothesis]] = []
         seen: Set[frozenset] = set()
 
@@ -84,7 +86,8 @@ class RankingAgent(BaseAgent):
         # Số trận có thể vượt n_matches khi có nhiều giả thuyết mới hơn n_matches.
         budget = max(n_matches, len(pairs))
 
-        # (2) Top-rank đấu với láng giềng gần trên proximity graph.
+        # (2) Top-rank đấu với láng giềng gần trên proximity graph
+        # ([:2] = hai giả thuyết tương đồng cao nhất).
         ranked = sorted(pool, key=lambda x: x.elo_rating, reverse=True)
         for h in ranked:
             for neighbor_id, _ in self.memory.neighbors(h.id, min_similarity=0.3)[:2]:
@@ -168,9 +171,10 @@ class RankingAgent(BaseAgent):
                 # 1 trận lỗi -> bỏ trận đó, không làm dừng cả tournament.
                 logger.warning("Ranking: trận %s vs %s lỗi, bỏ qua: %s", a.id, b.id, result)
                 continue
-            a_wins = result.winner_id == a.id
+            a_wins = result.winner_id == a.id                                   # Kiểm tra xem giả thuyết A có thắng hay không
             new_a, new_b = _elo_update(a.elo_rating, b.elo_rating, a_wins)
             a.elo_rating, b.elo_rating = new_a, new_b
+            # Sau khi cập nhật elo rating thì tăng số trận đấu đã chơi của hai giả thuyết
             a.matches_played += 1
             b.matches_played += 1
             self.memory.record_match(result)

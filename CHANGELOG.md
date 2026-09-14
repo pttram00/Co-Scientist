@@ -1,5 +1,67 @@
 # Changelog
 
+## Gộp `origin/main` (9a122ef) vào nhánh thử `DaoNhatAnh-thu-main`
+
+Main có 5 commit mới (Proximity chuyển sang embedding, cấu trúc báo cáo cuối, sửa tham số
+`temperature` trong LLM client, `.env.example`, bổ sung comment). Gộp vào nhánh này gây xung
+đột ở 7 file; phần dưới ghi lại cách xử lý.
+
+### Proximity: embedding + LLM xác nhận (`agents/proximity_agent.py`)
+
+- Lấy hướng của main: encode giả thuyết bằng sentence-transformers (chạy local) và tính
+  cosine, thay cho chấm từng cặp bằng LLM → bước tính độ tương đồng không tốn lượt gọi API.
+- Bổ sung so với bản trên main:
+  - Model mặc định đổi `all-MiniLM-L6-v2` → `paraphrase-multilingual-MiniLM-L12-v2`: giả
+    thuyết viết tiếng Việt, còn model cũ chỉ huấn luyện cho tiếng Anh (tokenizer uncased bỏ dấu).
+  - Cosine ≥ `proximity_duplicate_threshold` (mặc định 0.80) chỉ là **nghi trùng**; LLM xác
+    nhận (`_confirm_duplicate`) thì mới đánh dấu DUPLICATE. Lý do: embedding gần như không phân
+    biệt được ý ngược nghĩa — trong test, "Tăng cường autophagy…" và "Ức chế autophagy…" có
+    cosine 0.85 và bản cũ sẽ loại nhầm một trong hai.
+  - Tối đa `proximity_max_llm_checks_per_iteration` (mặc định 10) cặp/lượt, ưu tiên cosine cao;
+    cặp chưa kịp hỏi hoặc hỏi lỗi được hỏi lại ở lượt sau, cặp đã kết luận không hỏi lại.
+  - Chỉ tính cosine cho cặp mới (vector cache theo id, cạnh đã có trong graph không tính lại).
+  - Chỉ đánh dấu trùng khi cả hai giả thuyết còn active.
+  - `sentence-transformers` được import lười và encoder thay được
+    (`ProximityAgent(..., encoder=...)`): import dự án không kéo theo torch, test chạy không cần torch.
+- `orchestrator.py` — nạp model embedding (`ensure_ready()`) **trước** safety check: thiếu
+  thư viện thì báo lỗi ngay, chưa tốn lượt gọi LLM nào.
+- `config.py` / `main.py` — bỏ `proximity_max_pairs_per_iteration` / `--proximity-max-pairs`;
+  thêm `proximity_max_llm_checks_per_iteration`, `--proximity-max-llm-checks`, `--embedding-model`.
+- Số lời gọi LLM (đo bằng LLM giả, trung bình 3 lần chạy): cấu hình mặc định 356 → 201
+  (riêng Proximity 195 → 32); cấu hình thử nhỏ 45 → 28.
+
+### Xử lý các file xung đột khác
+
+| File | Cách gộp |
+|---|---|
+| `orchestrator.py` | Giữ luồng của nhánh (safety, pha kết thúc, Reflection có retriever) + `ProximityAgent(..., self.config.embedding)` |
+| `agents/meta_review_agent.py` | Gộp cả hai: đọc debate, research overview, cảnh báo an toàn, báo cáo fallback (nhánh) + cấu trúc báo cáo cố định và `_collect_papers` (main); thêm mục "Cảnh báo an toàn" vào cấu trúc báo cáo |
+| `agents/ranking_agent.py` | Giữ bản của nhánh (thay đổi trên main là comment cho code cũ) + docstring/comment còn áp dụng được |
+| `agents/base_agent.py` | Giữ cả `as_bool` / `truncate` (nhánh) và tham số `embedding` (main) |
+| `memory/context_memory.py`, `models/hypothesis.py` | Code của nhánh + comment/docstring của main |
+
+`llm/client.py`, `retrieval/retriever.py`, `agents/generation_agent.py`, `requirements.txt`,
+`.env.example` được git tự gộp.
+
+### Bảo mật
+
+- `config.py` trên main ghi cứng một Semantic Scholar API key làm giá trị mặc định, và key
+  này đã được push lên GitHub. Nhánh này bỏ giá trị đó, chỉ đọc `SEMANTIC_SCHOLAR_API_KEY` từ
+  `.env`. Key cũ cần được thu hồi và tạo key mới.
+
+### Đã kiểm tra (offline, LLM + retriever + encoder giả)
+
+1. Chạy trọn 3 vòng: báo cáo chỉ gồm giả thuyết đã review và đã đấu; mọi cặp active đều có
+   cạnh proximity; không hỏi LLM lại cặp đã kết luận; không còn 2 giả thuyết active trùng ý.
+2. 25% lời gọi LLM lỗi ngẫu nhiên + báo cáo lỗi → vẫn chạy xong, dùng báo cáo fallback.
+3. Mục tiêu không an toàn bị từ chối trước khi sinh giả thuyết.
+4. Hai giả thuyết ngược chiều tác động (cosine 0.85) không bị loại; bản trùng thật bị loại.
+5. Giới hạn số cặp hỏi LLM mỗi lượt; các lượt sau hỏi tiếp cho đến khi loại hết bản trùng.
+6. Chưa cài sentence-transformers → dừng ngay với thông báo rõ ràng, 0 lời gọi LLM.
+
+Chưa chạy với model embedding thật (máy chưa cài torch) và chưa hiệu chỉnh ngưỡng 0.80 trên
+dữ liệu thật.
+
 ## Đối chiếu với tài liệu Co-Scientist (co_sci_docs.pdf)
 
 Các thay đổi dưới đây sửa theo thứ tự ưu tiên rút ra khi đối chiếu code với bài báo

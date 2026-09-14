@@ -2,7 +2,8 @@
 làm nguồn sự thật duy nhất (single source of truth) cho toàn hệ thống.
 
 Luồng chạy:
-    0. SafetyAgent kiểm tra mục tiêu nghiên cứu -> không an toàn thì dừng.
+    0. Nạp model embedding (ProximityAgent), rồi SafetyAgent kiểm tra mục tiêu
+       nghiên cứu -> không an toàn thì dừng.
     1..N. Mỗi iteration: Pha 1 (Generation + Proximity) -> Pha 2 (Reflection +
        Ranking) -> Pha 3 (Evolution + Meta-review). State được lưu sau MỖI pha.
     Pha kết thúc: review + xếp hạng các giả thuyết Evolution tạo ở vòng cuối.
@@ -39,10 +40,11 @@ class Orchestrator:
         self.out_dir = Path(self.config.orchestrator.output_dir)
 
         # 1 instance / agent, dùng chung memory + llm client trong suốt vòng đời.
-        # GenerationAgent và ReflectionAgent cần thêm retriever để tra cứu paper.
+        # GenerationAgent và ReflectionAgent cần thêm retriever để tra cứu paper;
+        # ProximityAgent nhận thêm cấu hình embedding.
         self.safety_agent = SafetyAgent(self.llm, self.memory)
         self.generation_agent = GenerationAgent(self.llm, self.memory, self.retriever, self.config.retriever)
-        self.proximity_agent = ProximityAgent(self.llm, self.memory)
+        self.proximity_agent = ProximityAgent(self.llm, self.memory, self.config.embedding)
         self.reflection_agent = ReflectionAgent(self.llm, self.memory, self.retriever, self.config.retriever)
         self.ranking_agent = RankingAgent(self.llm, self.memory)
         self.evolution_agent = EvolutionAgent(self.llm, self.memory)
@@ -61,13 +63,13 @@ class Orchestrator:
         logger.info("Safety: mục tiêu nghiên cứu đạt kiểm tra an toàn")
 
     async def _run_proximity(self):
-        scored = await self.proximity_agent.run(
+        new_pairs = await self.proximity_agent.run(
             duplicate_threshold=self.config.orchestrator.proximity_duplicate_threshold,
-            max_pairs=self.config.orchestrator.proximity_max_pairs_per_iteration,
+            max_llm_checks=self.config.orchestrator.proximity_max_llm_checks_per_iteration,
         )
         n_active = len(self.memory.get_active_hypotheses())
-        logger.info("  Proximity: chấm %d cặp mới, %d giả thuyết còn active sau lọc trùng lặp",
-                    len(scored), n_active)
+        logger.info("  Proximity: tính %d cặp mới bằng embedding, %d giả thuyết còn active sau lọc trùng lặp",
+                    len(new_pairs), n_active)
 
     async def run_phase_1(self):
         """Pha 1: sinh giả thuyết + lọc trùng lặp."""
@@ -115,6 +117,9 @@ class Orchestrator:
         """Chạy đủ n_iterations vòng lặp 3 pha, rồi sinh báo cáo cuối cùng."""
         self.out_dir.mkdir(parents=True, exist_ok=True)
         try:
+            # Nạp model embedding trước tiên: thiếu thư viện thì dừng khi chưa tốn lượt gọi LLM nào.
+            logger.info("Nạp model embedding: %s", self.config.embedding.model_name)
+            await self.proximity_agent.ensure_ready()
             await self.check_goal_safety()
             for i in range(self.config.orchestrator.n_iterations):
                 self.memory.iteration = i + 1

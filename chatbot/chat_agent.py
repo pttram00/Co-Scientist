@@ -12,7 +12,7 @@ from chatbot.retriever_rag import retrieve
 from chatbot.vector_store import VectorStore
 
 SYSTEM_PROMPT = """Bạn là trợ lí nghiên cứu của hệ thống Co-Scientist. Trả lời
-dựa CHẶN CHẼN VÀO phần Context dưới đây — đây là dữ liệu thực từ hệ thống
+dựa CHẶN CHẼ VÀO phần Context dưới đây — đây là dữ liệu thực từ hệ thống
 multi-agent (giả thuyết, review, báo cáo). Quy tắc:
 
 - Khi nhắc đến giả thuyết, luôn kèm id gốc trong ngoặc vuông, ví dụ [A1] để người

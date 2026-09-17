@@ -1,5 +1,17 @@
 # Changelog
 
+## Giao diện Gradio (`app.py`)
+
+- `app.py` — giao diện 4 tab: chạy nghiên cứu (log trực tiếp, nút dừng), kết quả (bảng giả thuyết +
+  chi tiết từng giả thuyết khi bấm vào dòng), báo cáo (`final_report.md` + nút tải), nạp lại
+  `state.json` cũ. Log của các agent được thu qua một `logging.Handler` riêng và đẩy dần ra ô nhật ký.
+- `sim_backend.py` (mới) — LLM, retriever và encoder giả để chạy thử toàn bộ luồng mà không cần API
+  key, không gọi mạng và không cần tải model embedding. Nội dung sinh ra là giả, có gắn nhãn.
+- `requirements.txt` — thêm `gradio`.
+- Đã kiểm thử: chạy pipeline qua hàm của giao diện ở chế độ mô phỏng (bảng, chi tiết, báo cáo, file tải
+  về đều đúng), chặn mục tiêu rỗng, nạp lại `state.json`, dựng giao diện, và khởi động máy chủ thật
+  (HTTP 200). Chưa thử ở chế độ thật vì máy chưa có token LLM.
+
 ## Gộp `origin/main` (9a122ef) vào nhánh thử `DaoNhatAnh-thu-main`
 
 Main có 5 commit mới (Proximity chuyển sang embedding, cấu trúc báo cáo cuối, sửa tham số

@@ -68,6 +68,8 @@ research_coscientist/
 ├── retrieval/               # tra cứu bài báo từ arXiv, Semantic Scholar, OpenAlex
 ├── output/                  # thư mục lưu báo cáo và state JSON
 ├── .env.example             # mẫu file .env
+├── app.py                   # giao diện Gradio (python app.py)
+├── sim_backend.py           # LLM/retriever/embedding giả cho chế độ mô phỏng
 ├── config.py                # cấu hình chung cho LLM, retriever, embedding và orchestrator
 ├── main.py                  # CLI entrypoint
 ├── orchestrator.py          # điều phối vòng lặp 3 pha
@@ -176,6 +178,25 @@ python main.py --goal "Tìm cơ chế phân tử mới để ức chế sự gi�
 - `--output-dir`: thư mục lưu đầu ra
 
 Nếu mục tiêu nghiên cứu bị SafetyAgent từ chối, chương trình in lý do và thoát với mã 1.
+
+## Giao diện người dùng (Gradio)
+
+```bash
+python app.py                 # mở http://127.0.0.1:7860
+python app.py --port 7870     # đổi cổng
+python app.py --share         # tạo link chia sẻ tạm thời
+```
+
+Các tab trong giao diện:
+
+- **Chạy nghiên cứu**: nhập mục tiêu, ràng buộc và tham số vòng lặp; xem nhật ký chạy trực tiếp; nút *Dừng* huỷ giữa chừng.
+- **Kết quả**: bảng giả thuyết (trạng thái, Elo, số trận, điểm review). Bấm một dòng để xem cơ chế, thí nghiệm đề xuất và toàn bộ phản biện của giả thuyết đó.
+- **Báo cáo**: nội dung `final_report.md`, kèm nút tải `final_report.md` và `state.json`.
+- **Nạp kết quả cũ**: mở lại `state.json` của một lần chạy trước mà không cần chạy lại.
+
+Giao diện có **chế độ mô phỏng**: chạy trọn luồng 3 pha bằng LLM, tra cứu và embedding giả trong [sim_backend.py](sim_backend.py) — không cần API key, không gọi mạng, không cần tải model embedding. Nội dung giả thuyết khi đó là giả, chỉ để minh hoạ luồng chạy. Chế độ *Thật* dùng `.env` như phần trên.
+
+Giao diện tắt sẵn việc gửi thống kê sử dụng của Gradio (`GRADIO_ANALYTICS_ENABLED=False`).
 
 ## Quy trình chạy thực tế
 

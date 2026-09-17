@@ -8,3 +8,5 @@ sentence-transformers>=2.7.0
 # fail load DLL c10.dll trên Windows). Lệnh cài:
 #   pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
+# Giao diện người dùng (app.py)
+gradio>=5.0.0

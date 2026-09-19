@@ -11,4 +11,5 @@ from chatbot.vector_store import VectorStore
 
 
 def retrieve(query: str, store: VectorStore, top_k: int = 5) -> List[dict]:
+    """ Mục đích là truy suất các chunk liên quan đến query từ VectorStore để có thể sử dụng RAG. """
     return store.query(query, top_k=top_k)

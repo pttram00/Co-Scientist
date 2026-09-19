@@ -17,6 +17,9 @@ from chatbot.vector_store import VectorStore
 
 
 def _hypothesis_chunks(memory: ContextMemory) -> List[dict]:
+    """ 
+    Chuyển các giả thuyết được lưu trong memmory để đưa vào chunk để dễ dàng truy suất hơn sau này.
+    """
     chunks = []
     for h in memory.hypotheses.values():
         reviews_lines = []
@@ -44,7 +47,7 @@ def _hypothesis_chunks(memory: ContextMemory) -> List[dict]:
 
 def _split_report_by_heading(markdown: str) -> List[dict]:
     """Tách final_report.md theo heading '## ' → mỗi section 1 chunk."""
-    # Tìm vị trí các '## ' ở đầu dòng.
+    # Tìm vị trí các '## ' ở đầu dòng rôi chia thành các section lưu trữ trong chunk có dạng {id, text, metadata}
     matches = list(re.finditer(r"^##\s+(.+)$", markdown, flags=re.MULTILINE))
     if not matches:
         # Không có heading → gom cả file thành 1 chunk (nếu không rỗng).
@@ -52,6 +55,8 @@ def _split_report_by_heading(markdown: str) -> List[dict]:
         return [{"id": "report:full", "text": text,
                  "metadata": {"type": "report", "section": "full"}}] if text else []
     chunks = []
+
+    # 
     for i, m in enumerate(matches):
         heading = m.group(1).strip()
         start = m.start()
@@ -67,6 +72,7 @@ def _split_report_by_heading(markdown: str) -> List[dict]:
 
 
 def _report_chunks(report_path: str) -> List[dict]:
+    """ Tách final_report.md thành các chunk theo heading để dễ dàng sử dụng sau này"""
     p = Path(report_path)
     if not p.exists():
         return []
@@ -74,6 +80,7 @@ def _report_chunks(report_path: str) -> List[dict]:
 
 
 def _meta_note_chunks(memory: ContextMemory) -> List[dict]:
+    """ Mỗi meta_note trong memory thành 1 chunk để dễ dàng truy suất và sử dụng để đưa vào VectorStore để truy suất bằng RAG"""
     return [
         {
             "id": f"meta:{i}",
@@ -85,6 +92,7 @@ def _meta_note_chunks(memory: ContextMemory) -> List[dict]:
 
 
 def _feedback_chunks(memory: ContextMemory) -> List[dict]:
+    """ Mỗi agent_feedback trong memmory thành 1 chunk để dễ dàng truy suất và sử dụng để đưa vào VectorStore để truy suất bằng RAG"""
     chunks = []
     for agent, notes in memory.agent_feedback.items():
         if not notes:
@@ -111,7 +119,10 @@ def build_chunks(memory: ContextMemory, report_path: str = "output/final_report.
 def build_index(memory: ContextMemory, store_path: str,
                  report_path: str = "output/final_report.md",
                  model_name: str = "paraphrase-multilingual-MiniLM-L12-v2") -> VectorStore:
-    """Build toàn bộ index và lưu vào store_path. Trả VectorStore đã nạp sẵn."""
+    """
+    Build toàn bộ index và lưu vào store_path. Trả VectorStore đã nạp sẵn.
+    Có nghĩa là các chunk được tạo sẽ được embed và lưu vào VectorStore để có thể truy suất bằng RAG.
+    """
     chunks = build_chunks(memory, report_path=report_path)
     store = VectorStore(model_name=model_name)
     store.build(chunks, store_path)

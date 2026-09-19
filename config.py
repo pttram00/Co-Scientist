@@ -12,7 +12,9 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 @dataclass
 class LLMConfig:
-    model: str = "GLM-5.2"
+    # Mặc định đọc MODEL_DEFAULT từ .env (vd "glm-5.3:pre"); nếu .env không có thì dùng "GLM-5.2".
+    # Proxy boltz phân biệt hoa thường và kiểm tra tên model khắt khe -> sai tên → 403 Forbidden.
+    model: str = field(default_factory=lambda: os.environ.get("MODEL_DEFAULT", "GLM-5.2"))
     max_tokens: int = 2000
     temperature: float = 0.7
     api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_AUTH_TOKEN", ""))

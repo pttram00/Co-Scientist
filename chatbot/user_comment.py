@@ -1,23 +1,22 @@
-"""User comment: parse "<id> <text>" → LLM chấm điểm 0-10 → Review → memory.
+"""User comment: LLM chấm điểm 0-10 → Review → memory.
 
 Comment của user được LLM phân tích thành 3 score (correctness/novelty/
 feasibility) rồi lưu như một Review (review_type="user_comment"). Từ đó tự chảy
 vào các agent ở vòng sau (Evolution đọc h.reviews[-2:], Reflection/ MetaReview
 đọc tất cả reviews) — không cần sửa agent nào.
+
+Hai điểm vào:
+- add_review_comment: gắn nhận xét vào 1 giả thuyết (đã biết id + text, dùng khi
+  intent classifier đã xác định target_hypothesis_id + comment_text).
+- add_agent_feedback_comment: gắn nhận xét vào agent (memory.agent_feedback).
 """
 from __future__ import annotations
-
-import re
-from typing import Tuple
 
 from llm.client import LLMClient
 from memory.context_memory import ContextMemory
 
-# Parse "<A1> nội dung nhận xét..." → (hypothesis_id, comment_text).
-_COMMENT_RE = re.compile(r"^<\s*([A-Za-z0-9_-]+)\s*>\s*(.+)$", re.DOTALL)
-
-SCORE_SYSTEM = """Bạn chấm điểm MỘT nhận xét của người dùng về 1 giả thuyết khoa
-học theo 3 tiêu chí, thang 0-10 (số thực):
+SCORE_SYSTEM = """Bạn dựa vào nhận xét của người dùng về 1 giả thuyết khoa
+học để chấm điểm theo 3 tiêu chí, thang 0-10 (số thực):
 
 - correctness: mức độ nhận xét cho rằng giả thuyết ĐÚNG ĐẮN về logic/cơ chế.
   Nhận xét phản biện (ý kiến ngược) → điểm thấp; đồng tình → điểm cao.
@@ -36,14 +35,6 @@ SCORE_SCHEMA = """Schema JSON trả về:
 }"""
 
 
-def parse_comment(raw: str) -> Tuple[str, str] | None:
-    """Trả (hypothesis_id, comment_text) hoặc None nếu không khép định dạng."""
-    m = _COMMENT_RE.match(raw.strip())
-    if not m:
-        return None
-    return m.group(1), m.group(2).strip()
-
-
 async def _score_comment(llm: LLMClient, comment_text: str) -> dict:
     """Gọi LLM chấm 3 score 0-10 từ text comment. Fail → mặc định 5.0 (trung tính)."""
     user = f'Nhận xét: "{comment_text}"\n\n{SCORE_SCHEMA}'
@@ -57,30 +48,6 @@ async def _score_comment(llm: LLMClient, comment_text: str) -> dict:
     except Exception:
         # LLM fail (vd: lỗi kết nối) → dùng điểm trung tính, vẫn giữ comment text.
         return {"correctness": 5.0, "novelty": 5.0, "feasibility": 5.0}
-
-
-async def add_user_comment(
-    memory: ContextMemory,
-    llm: LLMClient,
-    raw_input: str,
-    state_path: str,
-) -> str:
-    """Xử lý 1 dòng comment của user (cú pháp <id> <text>). Trả thông báo tiếng Việt."""
-    parsed = parse_comment(raw_input)
-    if not parsed:
-        return ("Cú pháp comment: <id> <nội dung>. Ví dụ: <a1> cơ chế chưa thuyết phục.")
-
-    hid, comment_text = parsed
-    if not comment_text:
-        return "Nội dung nhận xét trống."
-
-    if hid not in memory.hypotheses:
-        # Gợi ý id gần đúng (trùng tiền tố) để user khắc phục.
-        near = [h_id for h_id in memory.hypotheses if hid.lower() in h_id.lower()]
-        hint = f" (có ý gần: {', '.join(near[:3])})" if near else ""
-        return f"Không tìm thấy giả thuyết id '{hid}'.{hint}"
-
-    return await add_review_comment(memory, llm, hid, comment_text, state_path)
 
 
 async def add_review_comment(
@@ -116,9 +83,9 @@ async def add_agent_feedback_comment(
 ) -> str:
     """Gắn nhận xét của user vào agent (memory.agent_feedback[agent_name]). Không
     cần chấm điểm — chỉ text, để agent đó đọc ở lần chạy sau qua feedback_block().
-    agent_name chuẩn hoá: khớp tên bước hợp lệ (generation/proximity/reflection/
-    ranking/evolution/meta_review)."""
-    valid = ["generation", "proximity", "reflection", "ranking", "evolution", "meta_review"]
+    agent_name chuẩn hoá: khớp tên bước hợp lệ (generation_agent/proximity_agent/reflection_agent/
+    ranking_agent/evolution_agent/meta_review_agent)."""
+    valid = ["generation_agent", "proximity_agent", "reflection_agent", "ranking_agent", "evolution_agent", "meta_review_agent"]
     head = (agent_name or "").lower()
     head = next((s for s in valid if s == head or s in head), None)
     if not head:

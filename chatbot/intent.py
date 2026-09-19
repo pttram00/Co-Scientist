@@ -14,7 +14,7 @@ kind:
 
 Comment trong "review" được LLM tự phân bổ: vào hypothesis (target_hypothesis_id)
 hay vào agent (target_agent) tuỳ ngữ nghĩa — chatbot sẽ dùng trường đó để gọi
-add_user_comment hoặc add_agent_feedback_comment.
+add_review_comment hoặc add_agent_feedback_comment.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class IntentResult:
 
 
 # 6 bước hợp lệ của hệ thống — dùng để validate target_agent / rerun_step.
-VALID_STEPS = ["generation", "proximity", "reflection", "ranking", "evolution", "meta_review"]
+VALID_STEPS = ["generation_agent", "proximity_agent", "reflection_agent", "ranking_agent", "evolution_agent", "meta_review_agent"]
 
 # Các kind hợp lệ.
 VALID_KINDS = ["new_topic", "resume_newfinal", "review", "rerun", "question", "unknown"]
@@ -53,14 +53,11 @@ thuyết và tên agent đang có). Trả JSON đúng schema, không kèm giải
 Các kind:
 - "new_topic":       user muốn BẮT ĐẦU nghiên cứu CHỦ ĐỀ MỚI hoặc ĐỔI CHỦ ĐỀ, bỏ
                      dữ liệu cũ. Dấu hiệu: "tôi muốn nghiên cứu X", "đổi chủ đề
-                     sang Y", "nghiên cứu về Z". → đặt research_goal.
+                     sang Y", "nghiên cứu về Z".... → đặt research_goal.
 - "resume_newfinal": user muốn TẠO FINAL/REPORT MỚI dựa trên dữ liệu CẢ PHIÊN
                      TRƯỚC lẫn mới, KHÔNG đổi chủ đề, KHÔNG reset. Dấu hiệu:
                      "tạo lại", "sinh lại", "tạo mới dựa trên nhận xét của tôi",
-                     "chạy thêm để ra báo cáo mới", "dựa trên dữ liệu cũ".
-                     Điểm nhận biết: KHÔNG nhắc chủ đề mới; nói về "dựa trên
-                     nhận xét/data" hoặc đơn giản "tạo lại". → KHÔNG đặt
-                     research_goal.
+                     "chạy thêm để ra báo cáo mới", "dựa trên dữ liệu cũ"....
 - "review":         user NHẬN XÉT về 1 giả thuyết hoặc 1 agent đã chạy. Có thể
                      kèm yêu cầu chạy lại bước nào đó → đặt rerun_step.
 - "rerun":           user YÊU CẦU CHẠY LẠI 1 bước cụ thể, không kèm nhận xét nội
@@ -69,10 +66,11 @@ Các kind:
 - "unknown":         không đủ thông tin để phân biệt.
 
 Quy tắc phân bổ comment:
-- Nếu user chê/nhắc 1 GIẢ THUYẾT cụ thể (vd có id như a1, be4c9fa2...) → đặt
-  target_hypothesis_id = id đó, comment_text = nội dung nhận xét.
-- Nếu user chê 1 AGENT cụ thể (reflection/ranking/evolution/generation/
-  proximity/meta_review) → đặt target_agent = tên agent, comment_text = nhận xét.
+- Nếu user chê/nhắc 1 GIẢ THUYẾT cụ thể (vd có id như a1, be4c9fa2... hoặc là 
+  một câu gần giống với giả thuyết thì vấn đưa ra giá trị của id đó) → đặt
+  target_hypothesis_id = id đó, comment_text = nội dung nhận xét(ưu tiên nhất)
+- Nếu user chê 1 AGENT cụ thể (reflection_agent/ranking_agent/evolution_agent/generation_agent/
+  proximity_agent/meta_review_agent) → đặt target_agent = tên agent, comment_text = nhận xét.
 - NẾu user nói "có 2 ý tưởng/giả thuyết GIỐNG NHAU/TRÙNG LẠP" mà không chỉ id cụ
   thể → đây là nhận xét về proximity (agent phát hiện trùng lặp): đặt
   target_agent="proximity", comment_text=nguyên câu, kind="review".
@@ -83,9 +81,14 @@ Quy tắc phân bổ comment:
   nhận xét mà không yêu cầu chạy lại → rerun_step=null.
 - Cú pháp ngắn "<id> <text>" hoặc "<a1> abc" → kind="review",
   target_hypothesis_id = id, comment_text = text.
+→ Lưu ý then chốt: Bạn cần phải có bước suy luận để xác định xem user đang nhận xét
+Ví dụ: user: "tôi đang thấy các bài báo bạn lấy đang quá cũ và không phù hợp"
+thì bạn cần :
+     - Người dùng đang thấy bài báo quá cũ → cần các bài báo mới hơn → nó sẽ là nhiệm vụ của generation_agent 
+     → cần đăt target_agent="generation_agent" + commnent_text= <nguyên câu của user> và kind="review"
 
-Chỉ chọn các bước hợp lệ: generation, proximity, reflection, ranking, evolution,
-meta_review. Nếu user nói "chạy lại X" mà X không hợp lệ → rerun_step=null +
+Chỉ chọn các bước hợp lệ: generation_agent, proximity_agent, reflection_agent, ranking_agent, evolution_agent,
+meta_review_agent. Nếu user nói "chạy lại X" mà X không hợp lệ → rerun_step=null +
 comment_text=nguyên câu, kind="review".
 """
 
@@ -121,6 +124,7 @@ def _normalize(data: dict, memory: ContextMemory) -> IntentResult:
         else:
             kind = "unknown"
 
+    # hid là id giả thuyết mà user muốn nhận xét 
     hid = data.get("target_hypothesis_id")
     if hid and memory.hypotheses and hid not in memory.hypotheses:
         # Thử khớp không phân biệt hoa thường / tiền tố.
@@ -132,7 +136,7 @@ def _normalize(data: dict, memory: ContextMemory) -> IntentResult:
             match = next((h for h in memory.hypotheses if low in h.lower()), None)
             if match:
                 hid = match
-
+    # agent là tên agent mà user muốn nhận xét 
     agent = data.get("target_agent")
     if agent:
         agent_low = agent.lower()

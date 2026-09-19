@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hành trình hypothesis_id</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a2029;
+    --border: #2a3340;
+    --text: #e6e8ec;
+    --muted: #8a96a8;
+    --accent: #4dd0a0;
+    --accent-2: #6db8ff;
+    --warn: #ffb86b;
+    --step: #2a3340;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f9fc;
+      --panel: #ffffff;
+      --border: #e2e8f0;
+      --text: #1a2029;
+      --muted: #647188;
+      --accent: #189379;
+      --accent-2: #2a7ad9;
+      --warn: #c77700;
+      --step: #cbd5e1;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 60px;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  h1 {
+    font-size: 22px; font-weight: 650; margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+  .timeline { position: relative; padding-left: 38px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 17px; top: 10px; bottom: 10px;
+    width: 2px; background: var(--step);
+  }
+  .step {
+    position: relative; margin: 0 0 22px; padding: 14px 18px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .step::before {
+    content: attr(data-n); position: absolute; left: -38px; top: 14px;
+    width: 34px; height: 28px; display: flex; align-items: center; justify-content: center;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    font-size: 13px; font-weight: 600; color: var(--accent);
+  }
+  .step.origin::before { color: var(--accent); border-color: var(--accent); }
+  .step.user::before { color: var(--accent-2); }
+  .step.final::before { color: var(--warn); border-color: var(--warn); }
+  .label { display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+  .title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+  .file { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; color: var(--accent-2); margin: 2px 0 8px; }
+  .desc { font-size: 13.5px; color: var(--text); margin: 0; }
+  .code {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12.5px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; margin: 8px 0 0; white-space: pre; overflow-x: auto; color: var(--accent);
+  }
+  .legend {
+    display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 22px; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    font-size: 12px; color: var(--muted);
+  }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .legend .d1 { background: var(--accent); }
+  .legend .d2 { background: var(--accent-2); }
+  .legend .d3 { background: var(--warn); }
+  .note {
+    margin-top: 24px; padding: 14px 18px; background: var(--panel);
+    border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 10px;
+    font-size: 13.5px;
+  }
+  .note b { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Hành trình hypothesis_id — từ lúc sinh ra đến lúc chấm điểm</h1>
+  <p class="sub">Trace đầy đủ đường đi của id (vd <code>be4c9fa2</code>) theo số dòng code thực tế trong repo D:\Co-Scientist.</p>
+
+  <div class="legend">
+    <span><span class="dot d1"></span>Nguồn gốc (sinh id)</span>
+    <span><span class="dot d2"></span>Nhánh user nhập (trích id)</span>
+    <span><span class="dot d3"></span>Đích đến (gắn review vào id)</span>
+  </div>
+
+  <div class="timeline">
+
+    <div class="step origin" data-n="0">
+      <span class="label">Nguồn gốc thực sự</span>
+      <div class="title">Sinh id ngẫu nhiên bằng uuid4</div>
+      <div class="file">models/hypothesis.py:54</div>
+      <p class="desc">Mỗi khi <code>Hypothesis(...)</code> được khởi tạo, Python gọi <code>uuid.uuid4()</code>, cắt 8 ký tự đầu. Đây là lý do id luôn dài 8 ký tự và ngẫu nhiên (không liên tục).</p>
+<pre class="code">id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])</pre>
+    </div>
+
+    <div class="step" data-n="1">
+      <span class="label">Lưu vào memory</span>
+      <div class="title">add_hypothesis dùng id làm key</div>
+      <div class="file">memory/context_memory.py:30 → 32</div>
+      <p class="desc">Generation / Evolution agent tạo Hypothesis rồi gọi <code>add_hypothesis(h)</code>. Tại đây id chính thức trở thành key trong dict <code>self.hypotheses</code>.</p>
+<pre class="code">def add_hypothesis(self, h: Hypothesis) -> None:
+    self.hypotheses[h.id] = h</pre>
+      <div class="file" style="margin-top:8px">gọi từ: agents/generation_agent.py:147 · agents/evolution_agent.py:95</div>
+    </div>
+
+    <div class="step user" data-n="2">
+      <span class="label">Đưa danh sách id vào context</span>
+      <div class="title">_build_context liệt kê id cho LLM</div>
+      <div class="file">chatbot/intent.py:103 → 111</div>
+      <p class="desc">Khi user mở chatbot, hệ thống đọc <code>memory.hypotheses.keys()</code> và ép thành chuỗi đưa vào prompt của intent classifier.</p>
+<pre class="code">ids = ", ".join(memory.hypotheses.keys()) or "(chưa có giả thuyết)"
+# → "- Các id giả thuyết đang có: a1, be4c9fa2, ..."</pre>
+    </div>
+
+    <div class="step user" data-n="3">
+      <span class="label">LLM trích xuất</span>
+      <div class="title">classify_intent gọi LLM complete_json</div>
+      <div class="file">chatbot/intent.py:161 → 163</div>
+      <p class="desc">LLM đọc câu user + danh sách id (bước 2), trả JSON có <code>target_hypothesis_id</code>. Đây là lúc id "nổi lên" từ câu tự nhiên của user.</p>
+    </div>
+
+    <div class="step user" data-n="4">
+      <span class="label">Khớp mềm / validate</span>
+      <div class="title">_normalize sửa id lệch chữ</div>
+      <div class="file">chatbot/intent.py:114 → 134</div>
+      <p class="desc">Nếu LLM trả id sai hoa-thường hoặc thiếu ký tự, hàm thử khớp bằng <code>low == h.lower()</code> rồi <code>low in h.lower()</code>. ID chính xác được set vào <code>IntentResult.target_hypothesis_id</code>.</p>
+    </div>
+
+    <div class="step" data-n="5">
+      <span class="label">Truyền tham số</span>
+      <div class="title">chat_agent gọi add_review_comment</div>
+      <div class="file">chatbot/chat_agent.py:278 → 281</div>
+      <p class="desc">Id được truyền thẳng từ <code>intent.target_hypothesis_id</code> vào hàm chấm điểm nhận xét.</p>
+<pre class="code">await add_review_comment(memory, llm,
+    intent.target_hypothesis_id, intent.comment_text, state_path)</pre>
+    </div>
+
+    <div class="step final" data-n="6">
+      <span class="label">Đích đến</span>
+      <div class="title">Gắn review vào đúng Hypothesis</div>
+      <div class="file">chatbot/user_comment.py:62 → 68 · memory/context_memory.py:48 → 63</div>
+      <p class="desc">Kiểm tra id có trong memory, chấm 3 score, rồi append review vào <code>hypotheses[id].reviews</code>. Đây là nơi id hoàn thành vai trò: chỉ đến đúng giả thuyết để gắn nhận xét đã chấm điểm.</p>
+<pre class="code">if hypothesis_id not in memory.hypotheses: return not found
+...
+self.hypotheses[hypothesis_id].reviews.append(r)</pre>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>Điểm cần nhớ:</b> id chưa bao giờ do user "chọn" trực tiếp. Nó sinh ngẫu nhiên ở <code>models/hypothesis.py:54</code>, tồn tại trong <code>memory.hypotheses</code>, và chatbot chỉ <i>lấy lại</i> id đó từ câu user viết. Nếu user gõ id không khớp bất kỳ id đang có, <code>user_comment.py:62</code> sẽ chặn lại — không tạo id mới, không ghi nhận xét.
+  </div>
+</div>
+</body>
+</html>

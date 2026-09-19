@@ -16,10 +16,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--hypotheses-per-iteration", type=int, default=6)
     p.add_argument("--matches-per-iteration", type=int, default=10)
     p.add_argument("--top-k-for-evolution", type=int, default=4)
-    p.add_argument("--model", default="GLM-5.2")
+    p.add_argument("--model", default="glm-5.3:pre")
     p.add_argument("--output-dir", default="output")
     return p.parse_args()
 
+
+# dùng để thử nghiệm cho hệ thống chứ không nhất thiết cần 
 def print_storage_status(self) -> None:
         """In ra toàn bộ dữ liệu đang được lưu trữ trong bộ nhớ của hệ thống."""
         print("="*60)
@@ -84,11 +86,8 @@ async def main():
             output_dir=args.output_dir,
         ),
     )
-    orchestrator = Orchestrator.for_new(research_goal=args.goal, constraints=args.constraints, config=config)
-    report_path = await orchestrator.run_full(
-        state_path=str(args.output_dir) + "/state.json",
-        report_path=str(args.output_dir) + "/final_report.md",
-    )
+    orchestrator = Orchestrator(research_goal=args.goal, constraints=args.constraints, config=config)
+    report_path = await orchestrator.run()
     print_storage_status(orchestrator.memory)  # In ra toàn bộ dữ liệu đang được lưu trữ trong bộ nhớ của hệ thống
     print(f"\nHoàn tất. Báo cáo tổng quan nghiên cứu: {report_path}")
 

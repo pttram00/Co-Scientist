@@ -19,11 +19,12 @@ class VectorStore:
         # Lazy-load: SentenceTransformer chỉ nạp khi cần embed (lần đầu chậm ~3s,
         # tốn RAM ~120MB). Nếu chỉ load index có sẵn (không query) thì không tải.
         self._model = None
-        self._chunks: List[dict] = []          # [{id, text, metadata}]
+        self._chunks: List[dict] = []              # [{id, text, metadata}]
         self._matrix: Optional[np.ndarray] = None  # (n, d) đã normalize
 
     # -------------------------------------------------- model
     def _ensure_model(self):
+        """ Hàm này được dùng để đảm bảo model được nạp khi cần thiết, tránh nạp model khi chỉ load index có sẵn."""
         if self._model is None:
             # Import tách ra để file này vẫn import được khi chưa cài torch.
             from sentence_transformers import SentenceTransformer
@@ -31,21 +32,28 @@ class VectorStore:
         return self._model
 
     def embed(self, texts: List[str]) -> np.ndarray:
-        """Trả matrix (n, d) đã L2 normalize → cosine = dot product."""
+        """
+        Trả matrix (n,d) embedding đã normalize - nghĩa là ở đây sẽ chuẩn hóa vector embedding để có độ dài bằng 1
+        → từ đó có thể tính cosine similarity bằng dot product.
+        """
         model = self._ensure_model()
-        vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-        arr = np.asarray(vecs, dtype=np.float32)
-        # Nhân đôi bảo đảm normalize (encode đã normalize nhưng theo L2 numpy đôi khi
-        # có sai số float; ta chuẩn lại để dot product = cosine chính xác).
-        norms = np.linalg.norm(arr, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return arr / norms
+        vecs = model.encode(texts,
+                             normalize_embeddings=True, 
+                             show_progress_bar=False)         # chuyển đổi danh sách văn bản sang số học 
+        arr = np.asarray(vecs, dtype=np.float32)              # ở đây chuyển vector embedding sang dạng numpy array với kiểu dữ liệu float32
+        
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)    # norms đại diện cho độ lớn( chiều dài) của từng vector
+        norms[norms == 0] = 1.0                               # nếu vector rỗng thì độ lớn sẽ = 1 để tránh chia cho 0
+        return arr / norms                      # đây là chuẩn hóa L2 cho từng vector 
 
-    # -------------------------------------------------- build / persist
+
+
     def build(self, chunks: List[dict], path: str) -> None:
         """Embed text của từng chunk rồi lưu JSON. chunks: [{id, text, metadata}]."""
         texts = [c["text"] for c in chunks]
+        # Nếu có text thì embed còn không thì sẽ tạo một matrix rỗng để tránh lỗi
         vecs = self.embed(texts) if texts else np.zeros((0, 1), dtype=np.float32)
+        # tạo một data để lưu trữ thông tin để có thể dễ dàng truy suất và sử dụng sau này.
         data = {
             "version": 1,
             "model": self.model_name,
@@ -59,6 +67,7 @@ class VectorStore:
                 for i, c in enumerate(chunks)
             ],
         }
+        # ta sẽ lưu data vào file JSON để có thể tái sử dụng dễ hơn sau này
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -66,6 +75,7 @@ class VectorStore:
         self.load(path)
 
     def load(self, path: str) -> None:
+        """ Load index từ file JSON đã lưu, nếu có embedding thì nạp vào matrix"""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.model_name = data.get("model", self.model_name)
@@ -82,17 +92,23 @@ class VectorStore:
         else:
             self._matrix = None
 
-    # -------------------------------------------------- query
+
+
     def query(self, text: str, top_k: int = 5) -> List[dict]:
-        """Top-k chunk giống query nhất (cosine). Trả list {id, text, metadata, score}."""
+        """
+        Top-k chunk giống query nhất (cosine). Trả list {id, text, metadata, score}.
+        Ở đây là nới làm việc với dữ liệu đầu vào từ người dùng.
+        """
         if self._matrix is None or len(self._chunks) == 0:
             return []
-        q = self.embed([text])[0]
-        scores = self._matrix @ q              # (n,) — cosine vì đã normalize
+        q = self.embed([text])[0]                    # khi này embed text đầu vào của người dùng
+        scores = self._matrix @ q                    # đây là bước nhân ma trận giữa sơ sở dữ liệu và query ban đầu → kết quả sinh ra là điểm cosine similarity
         k = min(top_k, len(self._chunks))
+
         # argpartition lấy k chỉ số lớn nhất, rồi sort giảm dần.
-        idx = np.argpartition(-scores, k - 1)[:k]
-        idx = idx[np.argsort(-scores[idx])]
+        # đây là một thuật toán giúp lấy nhanh các giá trị có điểm số cao nhất mà không cần sắp xếp
+        idx = np.argpartition(-scores, k - 1)[:k]    
+        idx = idx[np.argsort(-scores[idx])] # sắp xếp trên tập nhỏ k
         out = []
         for i in idx:
             c = self._chunks[int(i)]

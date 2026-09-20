@@ -8,17 +8,26 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
+# Hàm encode: danh sách text -> danh sách vector (giống Encoder của ProximityAgent),
+# để chế độ mô phỏng tiêm encoder giả và chế độ thật dùng lại model đã nạp sẵn.
+Encoder = Callable[[List[str]], List[List[float]]]
+
 
 class VectorStore:
-    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+                 encoder: Optional[Encoder] = None):
         self.model_name = model_name
         # Lazy-load: SentenceTransformer chỉ nạp khi cần embed (lần đầu chậm ~3s,
         # tốn RAM ~120MB). Nếu chỉ load index có sẵn (không query) thì không tải.
         self._model = None
+        # encoder tiêm từ ngoài: dùng thay SentenceTransformer nếu có. Cho phép
+        # (a) chế độ mô phỏng chạy không cần torch, (b) tái dùng encoder mà
+        # ProximityAgent đã nạp, khỏi giữ 2 model trong RAM.
+        self._encoder = encoder
         self._chunks: List[dict] = []              # [{id, text, metadata}]
         self._matrix: Optional[np.ndarray] = None  # (n, d) đã normalize
 
@@ -36,15 +45,18 @@ class VectorStore:
         Trả matrix (n,d) embedding đã normalize - nghĩa là ở đây sẽ chuẩn hóa vector embedding để có độ dài bằng 1
         → từ đó có thể tính cosine similarity bằng dot product.
         """
-        model = self._ensure_model()
-        vecs = model.encode(texts,
-                             normalize_embeddings=True, 
-                             show_progress_bar=False)         # chuyển đổi danh sách văn bản sang số học 
+        if self._encoder is not None:
+            vecs = self._encoder(texts)                       # encoder tiêm ngoài
+        else:
+            model = self._ensure_model()
+            vecs = model.encode(texts,
+                                 normalize_embeddings=True,
+                                 show_progress_bar=False)     # chuyển đổi danh sách văn bản sang số học
         arr = np.asarray(vecs, dtype=np.float32)              # ở đây chuyển vector embedding sang dạng numpy array với kiểu dữ liệu float32
-        
+
         norms = np.linalg.norm(arr, axis=1, keepdims=True)    # norms đại diện cho độ lớn( chiều dài) của từng vector
         norms[norms == 0] = 1.0                               # nếu vector rỗng thì độ lớn sẽ = 1 để tránh chia cho 0
-        return arr / norms                      # đây là chuẩn hóa L2 cho từng vector 
+        return arr / norms                      # đây là chuẩn hóa L2 cho từng vector
 
 
 

@@ -118,12 +118,16 @@ def build_chunks(memory: ContextMemory, report_path: str = "output/final_report.
 
 def build_index(memory: ContextMemory, store_path: str,
                  report_path: str = "output/final_report.md",
-                 model_name: str = "paraphrase-multilingual-MiniLM-L12-v2") -> VectorStore:
+                 model_name: str = "paraphrase-multilingual-MiniLM-L12-v2",
+                 encoder=None) -> VectorStore:
     """
     Build toàn bộ index và lưu vào store_path. Trả VectorStore đã nạp sẵn.
     Có nghĩa là các chunk được tạo sẽ được embed và lưu vào VectorStore để có thể truy suất bằng RAG.
+
+    encoder: hàm encode tiêm từ ngoài (chế độ mô phỏng, hoặc dùng lại encoder của
+    ProximityAgent). None -> VectorStore tự nạp sentence-transformers.
     """
     chunks = build_chunks(memory, report_path=report_path)
-    store = VectorStore(model_name=model_name)
+    store = VectorStore(model_name=model_name, encoder=encoder)
     store.build(chunks, store_path)
     return store

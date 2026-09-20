@@ -116,9 +116,16 @@ class Orchestrator:
             # Đóng httpx client của retriever để không leak connection pool.
             await self.retriever.aclose()
 
-    async def run_iterations(self, n: int, state_path: str) -> None:
+    async def run_iterations(self, n: int, state_path: str,
+                             report_path: Optional[str] = None) -> Optional[str]:
         """Chạy thêm n iteration từ iteration hiện tại (resume). Dùng cho chatbot.
-        Không sinh lại final_report — chatbot tự rebuild index sau."""
+
+        Đây là luồng "người dùng góp ý xong rồi chạy lại": giả thuyết, review và
+        góp ý của phiên trước giữ nguyên, các agent đọc lại chúng ở vòng mới.
+
+        report_path: có -> viết lại final_report sau khi chạy xong và trả đường dẫn.
+        None -> chỉ chạy iteration (chatbot tự rebuild index sau).
+        """
         out_dir = Path(state_path).parent
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -129,5 +136,15 @@ class Orchestrator:
                 await self.run_phase_2()
                 await self.run_phase_3()
                 self.memory.save(state_path)
+
+            if report_path is None:
+                return None
+            logger.info("Sinh lại báo cáo tổng quan sau khi tiếp thu góp ý...")
+            report = await self.meta_review_agent.run(mode="final_report")
+            Path(report_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(report_path).write_text(report, encoding="utf-8")
+            self.memory.save(state_path)
+            logger.info("Đã lưu báo cáo tại %s", report_path)
+            return report_path
         finally:
             await self.retriever.aclose()

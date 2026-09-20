@@ -39,8 +39,9 @@ class RetrieverConfig:
     # Số paper tối đa truyền vào 1 prompt (_select_papers_llm).
     papers_per_strategy: int = 7
     # Semantic Scholar API key (tùy chọn; trống -> rate limit thấp hơn nhưng vẫn dùng được).
+    # Chỉ đọc từ .env / biến môi trường — KHÔNG ghi key thật vào code (repo là public).
     semantic_scholar_api_key: str = field(
-        default_factory=lambda: os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "s2k-SS3V2nHplA6qHyX8QPQVqubfAb2iXzDXT1DDa2EO")
+        default_factory=lambda: os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
     )
     # OpenAlex khuyến khích mailto (polite pool) — không bắt buộc; trống vẫn gọi được.
     openalex_mailto: str = field(

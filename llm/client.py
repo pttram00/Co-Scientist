@@ -32,6 +32,11 @@ class LLMClient:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                               "AppleWebKit/537.36 (KHTML, like Gecko) "
                               "Chrome/120.0.0.0 Safari/537.36",
+                # Ép server nén bằng gzip thay vì brotli: nếu môi trường thiếu lib
+                # `brotli`/`brotlicffi` (pip sạch thường không có) thì httpx không
+                # giải nén br được → raise APIConnectionError dù HTTP trả 200.
+                # "gzip, identity" tắt brotli → tránh "Connection error" âm thầm.
+                "Accept-Encoding": "gzip, identity",
             },
         )
         self._semaphore = asyncio.Semaphore(config.max_concurrency)

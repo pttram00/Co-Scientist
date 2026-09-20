@@ -12,7 +12,13 @@ load_dotenv(dotenv_path=_ENV_PATH)
 
 @dataclass
 class LLMConfig:
+<<<<<<< HEAD
     model: str = "GLM-5.2"
+=======
+    # Mặc định đọc MODEL_DEFAULT từ .env (vd "glm-5.3:pre"); nếu .env không có thì dùng "GLM-5.2".
+    # Proxy boltz phân biệt hoa thường và kiểm tra tên model khắt khe -> sai tên → 403 Forbidden.
+    model: str = field(default_factory=lambda: os.environ.get("MODEL_DEFAULT", "GLM-5.2"))
+>>>>>>> a95873ed937111e64252d75524ca2309599cf52c
     max_tokens: int = 2000
     temperature: float = 0.7
     api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_AUTH_TOKEN", ""))
@@ -57,6 +63,7 @@ class OrchestratorConfig:
 
 
 @dataclass
+<<<<<<< HEAD
 class EmbeddingConfig:
     # Cấu hình cho sentence embedding dùng trong ProximityAgent (cosine similarity).
     # Model chạy local qua sentence-transformers; lần đầu dùng sẽ auto-download về
@@ -64,6 +71,16 @@ class EmbeddingConfig:
     model_name: str = "all-MiniLM-L6-v2"        # 384-dim, nhẹ, đủ tốt cho similarity câu ngắn
     device: str = "cpu"                          # "cpu" | "cuda" — cpu an toàn mặc định
     batch_size: int = 32                         # số câu encode cùng lúc trong 1 batch
+=======
+class ChatbotConfig:
+    # Model embedding local (đa ngữ, có tiếng Việt). Proxy boltz KHÔNG có
+    # /v1/embeddings nên phải dùng model local chứ không gọi GLM qua API.
+    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    top_k: int = 5                              # số chunk truy xuất / câu hỏi
+    vector_store_path: str = "output/vectors.json"
+    state_path: str = "output/state.json"
+    report_path: str = "output/final_report.md"
+>>>>>>> a95873ed937111e64252d75524ca2309599cf52c
 
 
 @dataclass
@@ -71,5 +88,9 @@ class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     retriever: RetrieverConfig = field(default_factory=RetrieverConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+<<<<<<< HEAD
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+=======
+    chatbot: ChatbotConfig = field(default_factory=ChatbotConfig)
+>>>>>>> a95873ed937111e64252d75524ca2309599cf52c
  

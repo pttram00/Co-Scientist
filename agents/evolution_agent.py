@@ -25,6 +25,7 @@ class EvolutionAgent(BaseAgent):
     name = "evolution_agent"
 
     def _feedback_summary(self, h: Hypothesis) -> str:
+        """ Tóm tắt phản biện gần nhất cho một giả thuyết để đưa vào prompt."""
         if not h.reviews:
             return "(chưa có phản biện)"
         return "\n".join(f"- [{r.review_type}] {r.comments}" for r in h.reviews[-2:])
@@ -80,10 +81,12 @@ class EvolutionAgent(BaseAgent):
         if not top:
             return []
 
+        # Tạo ra hai biến thể mới từ mỗi giả thuyết top-k
         tasks = []
         for h in top:
             tasks.append(self._simplify(h))
             tasks.append(self._analogy(h))
+        # Nếu có ít nhất 2 giả thuyết top-k thì kết hợp 2 giả thuyết tốt nhất để tạo ra một giả thuyết mới
         if len(top) >= 2:
             tasks.append(self._combine(top[0], top[1]))
 

@@ -30,7 +30,8 @@ class HypothesisStatus(str, Enum):
     ACTIVE = "active"          # đang trong vòng lặp
     DUPLICATE = "duplicate"    # bị Proximity agent gắn cờ trùng lặp
     EVOLVED = "evolved"        # đã được Evolution thay thế bằng bản cải tiến
-    ARCHIVED = "archived"      # bị loại khỏi vòng lặp
+    ARCHIVED = "archived"      # bị loại khỏi vòng lặp (vd: không qua initial review)
+    UNSAFE = "unsafe"          # bị safety review gắn cờ: không vào tournament, không đưa vào báo cáo
 
 
 class GenerationStrategy(str, Enum):
@@ -51,6 +52,8 @@ class Review:
     feasibility: float                # 0-10
     comments: str
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Tài liệu đã tra cứu khi review, dạng "title (year)" — chỉ full review có.
+    references: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -78,11 +81,22 @@ class Hypothesis:
     suggested_experiment: Optional[str] = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    def reviews_of(self, review_type: str) -> List[Review]:
+        return [r for r in self.reviews if r.review_type == review_type]
+
+    @property
+    def is_reviewed(self) -> bool:
+        """Đã có full review (có tra cứu tài liệu) -> đủ điều kiện vào tournament."""
+        return bool(self.reviews_of("full"))
+
     def average_score(self, key: str) -> float:
         """ Tính điểm trung bình của một giả thuyết theo tiêu chí correctness/novelty/feasibility(tính đúng đắn/tính mới/khả năng kiểm chứng)"""
-        # để tính được thì ở đây ta lấy tất cả các review của giả thuyết và lấy giá trị của key tương ứng 
-        # ví dụ: nếu key là "correctness" thì ta lấy tất cả các giá trị đó của các review và tính trung bình
-        vals = [getattr(r, key) for r in self.reviews]
+        # để tính được thì ở đây ta lấy các review của giả thuyết và lấy giá trị của key tương ứng
+        # ví dụ: nếu key là "correctness" thì ta lấy tất cả các giá trị đó của các review và tính trung bình.
+        # Ưu tiên full review: initial review không tra cứu tài liệu nên hay chấm
+        # novelty quá cao (ablation trong bài báo: 6.14 khi không search vs 2.38 khi có).
+        pool = self.reviews_of("full") or self.reviews
+        vals = [getattr(r, key) for r in pool]
         return sum(vals) / len(vals) if vals else 0.0
 
     def to_dict(self) -> dict:

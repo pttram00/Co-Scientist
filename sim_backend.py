@@ -126,6 +126,43 @@ class FakeLLM:
             return _fake_intent(user)
         raise AssertionError("Prompt không nhận diện được trong chế độ mô phỏng")
 
+    async def complete_json_tool(self, system: str, user: str, tool: dict, **kw):
+        """Nhánh theo tên tool (Cách 2 — structured output). Tương đương
+        `complete_json` nhưng trả đúng schema của tool thay vì parse system prompt.
+        Giữ để test/sim chạy được sau khi các agent chuyển sang `complete_json_tool`."""
+        await asyncio.sleep(self.rng.uniform(self.delay * 0.5, self.delay * 1.5))
+        name = tool.get("name", "")
+        if name == "record_search_queries":
+            self._count("generation")
+            return {"queries": ["neuronal senescence mechanisms", "brain aging interventions"]}
+        if name == "record_selected_paper_ids":
+            self._count("generation")
+            return {"ids": []}
+        if name == "record_hypothesis":
+            self._count("generation")
+            # EvolutionAgent cũng dùng tool này; nhãn chiến lược lấy từ user prompt
+            # (giống `complete_json` cũ) để kết quả gần nhau và lọc trùng vẫn hoạt động.
+            label = "Kết hợp" if "COMBINE" in user else "Đơn giản hoá" if "SIMPLIFY" in user else ""
+            prefix = f"[{label}] " if label else ""
+            return self._hypothesis(prefix=prefix)
+        if name == "record_hypothesis_review":
+            self._count("reflection")
+            return {"simulation_notes": "(mô phỏng) Bước 2 của cơ chế có thể bị bù trừ bởi con đường khác.",
+                    "correctness": self.rng.randint(4, 9), "novelty": self.rng.randint(2, 8),
+                    "feasibility": self.rng.randint(4, 9),
+                    "comments": "(mô phỏng) Nên bổ sung nhóm đối chứng."}
+        if name == "record_match_verdict":
+            self._count("ranking")
+            w = self.rng.choice(["A", "B"])
+            return {"winner": w, "rationale": f"(mô phỏng) Giả thuyết {w} có cơ chế cụ thể và dễ kiểm chứng hơn."}
+        if name == "record_review_feedback":
+            self._count("meta_review")
+            return {"patterns": ["(mô phỏng) Nhiều giả thuyết thiếu nhóm đối chứng."],
+                    "feedback": {"generation_agent": "(mô phỏng) Nêu rõ nhóm đối chứng.",
+                                 "reflection_agent": "(mô phỏng) Xét thêm chi phí thí nghiệm.",
+                                 "ranking_agent": "", "proximity_agent": "", "evolution_agent": ""}}
+        raise AssertionError(f"Tool '{name}' không nhận diện được trong chế độ mô phỏng")
+
     async def complete(self, system: str, user: str, **kw) -> str:
         await asyncio.sleep(self.delay)
         # ReAct RAG của chatbot: trả thẳng Final Answer dựa trên Observation đã có,
@@ -210,5 +247,6 @@ def install_llm(llm, fake: Optional[FakeLLM] = None, seed: int = 7,
     Orchestrator). Trả FakeLLM để tái dùng cho các client khác trong cùng phiên."""
     fake = fake or FakeLLM(seed=seed, delay=delay)
     llm.complete_json = fake.complete_json
+    llm.complete_json_tool = fake.complete_json_tool
     llm.complete = fake.complete
     return fake

@@ -5,6 +5,7 @@ import asyncio
 from typing import List
 
 from agents.base_agent import BaseAgent
+from llm.tool_schemas import TOOL_HYPOTHESIS
 from models.hypothesis import GenerationStrategy, Hypothesis
 
 SYSTEM_PROMPT = """Bạn là EvolutionAgent trong hệ thống multi-agent hỗ trợ
@@ -37,7 +38,7 @@ class EvolutionAgent(BaseAgent):
             f"Giả thuyết gốc: {h.content}\nCơ chế gốc: {h.rationale}\n"
             f"Phản biện gần nhất:\n{self._feedback_summary(h)}\n\n{JSON_SCHEMA_HINT}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
+        data = await self.llm.complete_json_tool(SYSTEM_PROMPT, user, tool=TOOL_HYPOTHESIS)
         return Hypothesis(
             content=data["content"], rationale=data["rationale"],
             research_goal=self.memory.research_goal, source_agent=self.name,
@@ -53,7 +54,7 @@ class EvolutionAgent(BaseAgent):
             f"Giả thuyết gốc: {h.content}\nCơ chế gốc: {h.rationale}\n"
             f"Phản biện gần nhất:\n{self._feedback_summary(h)}\n\n{JSON_SCHEMA_HINT}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
+        data = await self.llm.complete_json_tool(SYSTEM_PROMPT, user, tool=TOOL_HYPOTHESIS)
         return Hypothesis(
             content=data["content"], rationale=data["rationale"],
             research_goal=self.memory.research_goal, source_agent=self.name,
@@ -68,7 +69,7 @@ class EvolutionAgent(BaseAgent):
             f"Giả thuyết 1: {h1.content}\nCơ chế 1: {h1.rationale}\n\n"
             f"Giả thuyết 2: {h2.content}\nCơ chế 2: {h2.rationale}\n\n{JSON_SCHEMA_HINT}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
+        data = await self.llm.complete_json_tool(SYSTEM_PROMPT, user, tool=TOOL_HYPOTHESIS)
         return Hypothesis(
             content=data["content"], rationale=data["rationale"],
             research_goal=self.memory.research_goal, source_agent=self.name,
@@ -90,7 +91,12 @@ class EvolutionAgent(BaseAgent):
         if len(top) >= 2:
             tasks.append(self._combine(top[0], top[1]))
 
-        evolved = await asyncio.gather(*tasks)
+        # return_exceptions=True: 1 biến thể lỗi không rớt cả pha Evolution;
+        # bỏ biến thể lỗi, vẫn giữ phần thành công (partial, giống GenerationAgent).
+        evolved = await asyncio.gather(*tasks, return_exceptions=True)
         for h in evolved:
+            if isinstance(h, Exception):
+                print(f"[EvolutionAgent] 1 biến thể lỗi, bỏ qua: {h}")
+                continue
             self.memory.add_hypothesis(h)
-        return list(evolved)
+        return [h for h in evolved if not isinstance(h, Exception)]

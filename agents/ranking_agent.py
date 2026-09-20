@@ -10,6 +10,7 @@ import random
 from typing import List, Tuple
 
 from agents.base_agent import BaseAgent
+from llm.tool_schemas import TOOL_MATCH_VERDICT
 from models.hypothesis import Hypothesis, MatchResult
 
 SYSTEM_PROMPT = """Bạn là RankingAgent, đóng vai một hội đồng phản biện khoa
@@ -33,9 +34,16 @@ def _elo_update(rating_a: float, rating_b: float, a_wins: bool) -> Tuple[float, 
     Điểm elo này có thể nói là một giá trị đánh giá tổng hợp về một giả thuyết dựa trên các trận đấu.
     """
     expected_a = 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
-    score_a = 1.0 if a_wins else 0.0
+    expected_b = 1 - expected_a
+    if a_wins is True:
+        score_a = 1.0
+    elif a_wins is False:
+        score_a = 0.0
+    else:
+        score_a = 0.5
+    score_b = 1.0 - score_a
     new_a = rating_a + K_FACTOR * (score_a - expected_a)
-    new_b = rating_b + K_FACTOR * ((1 - score_a) - (1 - expected_a))
+    new_b = rating_b + K_FACTOR * (score_b - expected_b)
     return new_a, new_b
 
 
@@ -82,14 +90,27 @@ class RankingAgent(BaseAgent):
             f"{b.average_score('feasibility'):.1f}\n\n"
             f"{JSON_SCHEMA_HINT}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
-        winner = a if data["winner"].strip().upper().startswith("A") else b
-        return MatchResult(
-            hypothesis_a_id=a.id,
-            hypothesis_b_id=b.id,
-            winner_id=winner.id,
-            rationale=data.get("rationale", ""),
-        )
+        # Cách 2 — tool calling ép schema: winner chỉ có thể là "A"/"B",
+        # rationale luôn là string. Không còn kẹt `data["winner"]` trần.
+        try:
+            data = await self.llm.complete_json_tool(SYSTEM_PROMPT, user, tool=TOOL_MATCH_VERDICT)
+            winner = a if str(data.get("winner", "")).strip().upper().startswith("A") else b
+            return MatchResult(
+                hypothesis_a_id=a.id,
+                hypothesis_b_id=b.id,
+                winner_id=winner.id,
+                rationale=str(data.get("rationale", "")),
+            )
+        except Exception as e:
+            # Fallback an toàn: 1 trận lỗi không crash cả tournament.
+            # winner_id=None -> _elo_update nhánh score_a=0.5 (hoà).
+            print(f"[RankingAgent] _run_match lỗi, dùng kết quả hoà: {e}")
+            return MatchResult(
+                hypothesis_a_id=a.id,
+                hypothesis_b_id=b.id,
+                winner_id=None,
+                rationale=f"(LLM lỗi, kết quả dự phòng hoà: {e})",
+            )
 
     async def run(self, n_matches: int = 10) -> List[MatchResult]:
         pairs = self._select_pairs(n_matches)
@@ -99,7 +120,8 @@ class RankingAgent(BaseAgent):
         results = await asyncio.gather(*[self._run_match(a, b) for a, b in pairs])
 
         for (a, b), result in zip(pairs, results):
-            a_wins = result.winner_id == a.id                                   # Kiểm tra xem giả thuyết A có thắng hay không
+            # winner_id=None (fallback hoà) -> a_wins=None -> _elo_update nhánh 0.5 (hoà).
+            a_wins = None if result.winner_id is None else result.winner_id == a.id
             new_a, new_b = _elo_update(a.elo_rating, b.elo_rating, a_wins)
             a.elo_rating, b.elo_rating = new_a, new_b
             # Sau khi cập nhật elo rating thì tăng số trận đấu đã chơi của hai giả thuyết

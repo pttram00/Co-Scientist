@@ -10,6 +10,60 @@ from anthropic import AsyncAnthropic, APIError, APIConnectionError, RateLimitErr
 from config import LLMConfig
 
 
+def _extract_balanced_json(raw: str) -> str:
+    """Bóc object/array JSON đầu tiên khớp ngoặc từ raw text.
+
+    Xử lý 3 trường hợp LLM hay gặp:
+      - JSON lồng trong code fence (```json ... ```) -> bóc fence trước.
+      - Text thừa trước/sau JSON (vd: "Dưới đây là kết quả: {...} Cảm ơn.")
+      - JSON bị cắt giữa (không khớp ngoặc) -> trả nguyên để caller raise lỗi rõ.
+
+    Thử `json.loads` nguyên chuỗi trước (nhanh, đúng trường hợp JSON thuần);
+    nếu fail, quét từ `{` / `[` đầu tiên đến ngoặc khớp cuối cùng và `json.loads`
+    lại. Trả về chuỗi raw (có thể không hợp lệ) nếu không bóc được đều —
+    `complete_json` sẽ raise ValueError kèm raw để debug.
+    """
+    raw = re.sub(r"^```(?:json)?|^```|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+
+    try:
+        json.loads(raw)
+        return raw
+    except Exception:
+        pass
+
+    for tok_open, tok_close in ("{}", "[]"):
+        start = raw.find(tok_open[0])
+        if start == -1:
+            continue
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(raw)):
+            c = raw[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == tok_open:
+                depth += 1
+            elif c == tok_close:
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start : i + 1]
+                    try:
+                        json.loads(candidate)
+                        return candidate
+                    except Exception:
+                        break  # ngoặc khớp nhưng không parse được -> không khớp nữa
+    return raw
+
+
 class LLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
@@ -126,16 +180,98 @@ class LLMClient:
                     await asyncio.sleep(1.5 * (attempt + 1))
             raise RuntimeError(f"Model call thất bại sau {self.config.max_retries} lần: {last_err}")
 
-    async def complete_json(self, system: str, user: str, **kwargs) -> dict | list:
-        """Yêu cầu model trả về JSON thuần và parse. Với đầu vào là System prompt và User prompt"""
+    async def complete_json(self, system: str, user: str, retries_on_parse_fail: int = 2, **kwargs) -> dict | list:
+        """Yêu cầu model trả về JSON thuần và parse. Với đầu vào là System prompt và User prompt.
+
+        Hardening so với bản cũ:
+          - Dùng `_extract_balanced_json` để bóc JSON ra khỏi text thừa / code fence,
+            thay vì chỉ `re.sub` code fence.
+          - Khi parse fail, gửi lại cho model kèm lỗi cụ thể và yêu cầu sửa (≤
+            `retries_on_parse_fail` lần) — LLM thường tự chữa được JSON sai của mình.
+          - Vẫn giũ signature `(system, user, **kwargs)` để không vỡ FakeLLM /
+            chatbot / các agent gọi hiện tại.
+        """
         json_system = (
             system
-            + "\n\nQUAN TRỌNG: Chỉ trả về JSON hợp lệ, không thêm lời dẫn, "
-              "không dùng markdown code fence."
+            + "\n\nQUAN TRỌNG: Chỉ trả về JSON hợp lệ, bắt đầu bằng { hoặc [, "
+            "kết thúc bằng } hoặc ], không thêm lời dẫn, không dùng markdown code fence."
         )
-        raw = await self.complete(json_system, user, **kwargs)
-        cleaned = re.sub(r"^```json|^```|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        cur_user = user
+        last_err: Exception | None = None
+        raw = ""
+        for attempt in range(retries_on_parse_fail + 1):
+            raw = await self.complete(json_system, cur_user, **kwargs)
+            candidate = _extract_balanced_json(raw)
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_err = e
+                if attempt < retries_on_parse_fail:
+                    # Self-correction: báo lỗi cho model và yêu cầu trả lại JSON đúng.
+                    cur_user = (
+                        f"{user}\n\n"
+                        f"Lần trả trước KHÔNG phải JSON hợp lệ (lỗi: {e.msg}). "
+                        f"Hãy trả lại CHÍNH XÁC một JSON hợp lệ, bắt đầu bằng {{ hoặc [ "
+                        f"và kết thúc bằng }} hoặc ], không thêm gì khác."
+                    )
+                    await asyncio.sleep(0.5)
+        raise ValueError(
+            f"Không parse được JSON sau {retries_on_parse_fail + 1} lần: {last_err}\nRaw: {raw[:500]}"
+        )
+
+    async def complete_json_tool(self, system: str, user: str, tool: dict, **kwargs) -> dict:
+        """Gọi model với 1 tool + `tool_choice` ép cụ thể (Cách 2 — structured output).
+
+        Schema thật do `tool["input_schema"]` định nghĩa và Anthropic ép presence/type
+        ngay tại inference -> không cần parse text, không cần kẹt `data["key"]` trần.
+        Trả về `block.input` (dict đã validate theo schema).
+
+        Fallback: nếu model không gọi tool (trả text thuần — có thể do proxy bỏ qua
+        `tool_choice`), gom text và gọi `complete_json` (hardened) để parse; nếu
+        fallback cũng fail -> raise ValueError kèm raw. Như vậy wrapper này tương
+        thích với cả proxy hỗ trợ và không hỗ trợ tool use.
+        """
+        async with self._semaphore:
+            # Build kwargs giống complete(): temperature/top_p/top_k/reasoning_effort
+            # đi qua extra_body (an toàn với mọi phiên bản SDK / proxy).
+            extra_body: dict = {}
+            sampling = {
+                "temperature": kwargs.pop("temperature", None) or self.config.temperature,
+            }
+            for k_out, v_in in (("top_p", getattr(self.config, "top_p", None)),
+                               ("top_k", getattr(self.config, "top_k", None))):
+                if v_in is not None:
+                    sampling[k_out] = v_in
+            extra_body.update(sampling)
+            reasoning_effort = getattr(self.config, "reasoning_effort", None)
+            if reasoning_effort:
+                extra_body["reasoning_effort"] = reasoning_effort
+
+            req_kwargs = {
+                "model": self.config.model,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+                "max_tokens": kwargs.pop("max_tokens", None) or self.config.max_tokens,
+                "tools": [tool],
+                "tool_choice": {"type": "tool", "name": tool["name"]},
+            }
+            if extra_body:
+                req_kwargs["extra_body"] = extra_body
+
+            resp = await self._client.messages.create(**req_kwargs)
+
+        # tool_use block đầu khớp tên tool -> trả input (dict đã validate schema).
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use" and block.name == tool["name"]:
+                return block.input
+
+        # Fallback: model không gọi tool (trả text) -> parse text qua complete_json.
+        text = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
         try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Không parse được JSON: {e}\nRaw: {raw[:500]}")
+            return await self.complete_json(system, user + f"\n\n{text}", **kwargs)
+        except ValueError as e:
+            raise ValueError(
+                f"Model không gọi tool '{tool['name']}' và text không parse được JSON: {e}\nRaw: {text[:500]}"
+            )

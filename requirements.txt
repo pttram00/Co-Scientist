@@ -3,20 +3,13 @@ python-dotenv>=1.0.0
 pydantic>=2.6.0
 httpx>=0.27.0
 numpy>=1.26.0
-<<<<<<< HEAD
+# Dùng chung cho cả ProximityAgent (cosine similarity) và kho RAG của chatbot
+# (chatbot/vector_store.py) — cả hai chạy sentence-transformers local.
 sentence-transformers>=2.7.0
 # torch: cài bản CPU ổn định từ index chính thức của PyTorch (bản 2.14 trên PyPI
 # fail load DLL c10.dll trên Windows). Lệnh cài:
 #   pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
-=======
-# Kho RAG cua chatbot (chatbot/vector_store.py) dung sentence-transformers chay local.
-sentence-transformers>=2.7.0
-# torch: cai ban CPU on dinh tu index chinh thuc cua PyTorch (ban 2.14 tren PyPI
-# fail load DLL c10.dll tren Windows). Lenh cai:
-#   pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
-torch>=2.2.0
 # Giao dien nguoi dung (app.py). Bat buoc Gradio 6: app.py dung API cua ban 6
 # (theme nam o launch() chu khong phai Blocks(), Chatbot bo tham so type).
 gradio>=6.0.0
->>>>>>> 88ee7c96d5023f0b7ed4e7c3c60d09c43a5a3dfa

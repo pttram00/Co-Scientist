@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from agents.base_agent import BaseAgent
+from llm.tool_schemas import TOOL_FEEDBACK
 from models.hypothesis import Hypothesis
 
 SYSTEM_PROMPT_FEEDBACK = """Bạn là MetaReviewAgent trong hệ thống multi-agent
@@ -92,7 +93,13 @@ class MetaReviewAgent(BaseAgent):
             f"Các nhận xét phản biện tích luỹ gần đây:\n{self._collect_comments()}\n\n"
             f"{JSON_SCHEMA_HINT_FEEDBACK}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT_FEEDBACK, user)
+        try:
+            data = await self.llm.complete_json_tool(
+                SYSTEM_PROMPT_FEEDBACK, user, tool=TOOL_FEEDBACK
+            )
+        except Exception as e:
+            print(f"[MetaReviewAgent] run_feedback lỗi, trả feedback rỗng: {e}")
+            return {}
         for pattern in data.get("patterns", []):
             self.memory.add_meta_note(pattern)
         feedback = data.get("feedback", {})

@@ -40,6 +40,7 @@ from typing import Dict, List
 
 from agents.base_agent import BaseAgent
 from config import RetrieverConfig
+from llm.tool_schemas import TOOL_HYPOTHESIS, TOOL_PAPER_IDS, TOOL_QUERIES
 from models.hypothesis import GenerationStrategy, Hypothesis
 from models.paper import Paper
 from retrieval.retriever import Retriever
@@ -178,7 +179,7 @@ class GenerationAgent(BaseAgent):
             f"Sinh 3-5 query.\n{QUERY_EXPANSION_SCHEMA}"
         )
         try:
-            data = await self.llm.complete_json(system, user)
+            data = await self.llm.complete_json_tool(system, user, tool=TOOL_QUERIES)
             queries = data.get("queries") or []
             queries = [q.strip() for q in queries if q and q.strip()]
             if queries:
@@ -220,7 +221,7 @@ class GenerationAgent(BaseAgent):
             f"Chọn {k} paper phù hợp nhất. {SELECT_PAPERS_SCHEMA}"
         )
         try:
-            data = await self.llm.complete_json(system, user)
+            data = await self.llm.complete_json_tool(system, user, tool=TOOL_PAPER_IDS)
             ids = data.get("ids") or []
         except Exception as e:
             print(f"[GenerationAgent] _select_papers_llm lỗi, dùng top citation: {e}")
@@ -251,7 +252,7 @@ class GenerationAgent(BaseAgent):
             f"{STRATEGY_INSTRUCTIONS[strategy]}\n\n{JSON_SCHEMA_HINT}"
             f"{self.feedback_block()}"
         )
-        data = await self.llm.complete_json(SYSTEM_PROMPT, user)
+        data = await self.llm.complete_json_tool(SYSTEM_PROMPT, user, tool=TOOL_HYPOTHESIS)
         return Hypothesis(
             content=data["content"],
             rationale=data["rationale"],

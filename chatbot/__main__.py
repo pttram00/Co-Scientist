@@ -6,8 +6,9 @@ Cách chạy:
 Vòng lặp: gõ câu tự nhiên → LLM classify_intent → điều hướng (xử lý nằm trong
 chat_agent, helper trong helpers):
 - new_topic:      tạo hướng nghiên cứu mới (hỏi goal/constraints → chạy full).
-- resume_newfinal: chạy thêm iteration để ra final mới (giữ data, không reset).
-- review/rerun:   nhận xét → gắn vào hypothesis/agent; nếu kèm rerun_step → rerun.
+- resume_newfinal: chạy thêm iteration để ra báo cáo mới (giữ data, không reset).
+- review/rerun:   ghi nhận góp ý vào hypothesis/agent; KHÔNG tự chạy lại —
+                  người dùng nói "chạy lại" khi đã góp ý xong.
 - question:       hỏi RAG → trả lời (ReAct loop trong chat_agent.run_rag_agent).
 - unknown:        hỏi lại user.
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from chatbot.chat_agent import answer, handle_review_or_rerun, handle_resume_newfinal, handle_new_topic
+from chatbot.chat_agent import answer, handle_review, handle_resume_newfinal, handle_new_topic
 from chatbot.intent import classify_intent
 from chatbot import helpers
 from config import AppConfig
@@ -34,13 +35,13 @@ Lệnh slash (không qua LLM):
   /quit            Thoát
 
 Hoặc gõ câu tự nhiên:
-  - "Tôi muốn nghiên cứu về enzymeX"        → đổi chủ đề (reset + chạy mới)
-  - "đổi chủ đề sang proteinY"              → đổi chủ đề (reset + chạy mới)
-  - "tạo lại giả thuyết dựa trên nhận xét"  → chạy tiếp để ra final mới (giữ data)
-  - "Giả thuyết a1 cơ chế chưa chắc"        → nhận xét vào a1
-  - "Reflection chấm sai, chạy lại"         → nhận xét + rerun Reflection
-  - "có 2 ý tưởng giống nhau quá"           → nhận xét vào proximity (gợi ý rerun)
-  - "Chạy lại Ranking"                      → rerun Ranking
+  - "Tôi muốn nghiên cứu về enzymeX"        → đổi chủ đề (bỏ data cũ + chạy mới)
+  - "đổi chủ đề sang proteinY"              → đổi chủ đề (bỏ data cũ + chạy mới)
+  - "Giả thuyết a1 cơ chế chưa chắc"        → ghi góp ý vào a1
+  - "Reflection chấm điểm quá dễ dãi"       → ghi góp ý vào reflection_agent
+  - "có 2 ý tưởng giống nhau quá"           → ghi góp ý vào proximity_agent
+  - "chạy lại"                              → tiếp thu góp ý, chạy thêm vòng,
+                                              viết báo cáo mới (giữ nguyên data)
   - "Báo cáo có bao nhiêu giả thuyết?"      → hỏi RAG
 """
 
@@ -90,7 +91,7 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
                 continue
             print("(đang truy xuất + gọi GLM...)")
             try:
-                reply = await answer(query, store, llm, top_k=top_k)
+                reply = await answer(query, store, llm, top_k=top_k, verbose=True)
                 print(reply)
             except Exception as e:
                 print(f"Lỗi khi trả lời: {e}")
@@ -105,9 +106,13 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
             continue
 
         if intent.kind == "new_topic":
+            # Hỏi goal/constraints ở đây (handler thuần, không gọi input()).
+            goal, constraints = helpers.new_session_prompt(intent)
+            print(f"Đang chạy hệ thống cho mục tiêu: {goal} (bỏ dữ liệu cũ) ...")
             try:
-                new_mem, new_store = await handle_new_topic(
-                    intent, config, state_path, report_path, store_path, model_name)
+                new_mem, new_store, msg = await handle_new_topic(
+                    goal, constraints, config, state_path, report_path, store_path, model_name)
+                print(msg)
                 if new_mem is not None:
                     memory, store = new_mem, new_store
             except Exception as e:
@@ -115,29 +120,29 @@ async def _run_repl(state_path: str, store_path: str, report_path: str,
             continue
 
         if intent.kind == "resume_newfinal":
+            ans = input("Chạy thêm bao nhiêu vòng lặp? [mặc định 1]: ").strip()
+            n = int(ans) if ans.isdigit() else 1
+            print(f"Đang chạy thêm {n} vòng (giữ nguyên giả thuyết + góp ý cũ) ...")
             try:
-                new_mem, new_store = await handle_resume_newfinal(
-                    intent, config, memory, state_path, report_path, store_path, model_name)
-                if new_mem is not None:
-                    memory, store = new_mem, new_store
+                memory, store, msg = await handle_resume_newfinal(
+                    n, config, memory, state_path, report_path, store_path, model_name)
+                print(msg)
             except Exception as e:
-                print(f"Lỗi khi chạy tiếp để ra final mới: {e}")
+                print(f"Lỗi khi chạy tiếp để ra báo cáo mới: {e}")
             continue
 
         if intent.kind in ("review", "rerun"):
             try:
-                new_store = await handle_review_or_rerun(
-                    intent, config, memory, llm, state_path, report_path, store_path, model_name)
-                if new_store is not None:
-                    store = new_store
+                print(await handle_review(intent, memory, llm, state_path))
+                print("  💡 Gõ \"chạy lại\" để hệ thống tiếp thu góp ý và viết báo cáo mới.")
             except Exception as e:
-                print(f"Lỗi khi xử lý nhận xét/rerun: {e}")
+                print(f"Lỗi khi ghi nhận góp ý: {e}")
             continue
 
         if intent.kind == "question":
             print("(đang truy xuất + gọi GLM...)")
             try:
-                reply = await answer(line, store, llm, top_k=top_k)
+                reply = await answer(line, store, llm, top_k=top_k, verbose=True)
                 print(reply)
             except Exception as e:
                 print(f"Lỗi khi trả lời: {e}")
@@ -162,7 +167,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = AppConfig()
-    # Nếu user truyền --model則 ghi đè; còn không thì giữ model từ MODEL_DEFAULT trong .env
+    # Nếu user truyền --model thì ghi đè; còn không thì giữ model từ MODEL_DEFAULT trong .env
     # (qua LLMConfig) — tránh gửi model sai ("GLM-5.2") → 403 Forbidden trên proxy boltz.
     if args.model:
         config.llm.model = args.model
@@ -172,7 +177,7 @@ def main() -> None:
         store_path=cb.vector_store_path,
         report_path=cb.report_path,
         top_k=cb.top_k,
-        model_name=cb.embedding_model,
+        model_name=config.chatbot_embedding_model(),
         config=config,
     ))
 

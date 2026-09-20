@@ -16,6 +16,8 @@ Lưu ý: LLMClient.complete chỉ gửi 1 message user (không hỗ trợ multi-
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+from pathlib import Path
 from typing import List, Optional
 
 from llm.client import LLMClient
@@ -207,95 +209,100 @@ async def run_rag_agent(query: str, store: VectorStore, llm: LLMClient,
     return "(không ra Final Answer trong giới hạn bước)"
 
 
-async def answer(query: str, store: VectorStore, llm: LLMClient, top_k: int = 5) -> str:
+async def answer(query: str, store: VectorStore, llm: LLMClient, top_k: int = 5,
+                 verbose: bool = False) -> str:
     """
-    Hàm này được gọi khi user hỏi câu hỏi 
-    không gọi trực tiếp run_rag_agent để tách biệt luồng ReAct với handler route
+    Hàm này được gọi khi user hỏi câu hỏi
+    không gọi trực tiếp run_rag_agent để tách biệt luồng ReAct với handler route.
+    verbose=True (REPL) in từng bước ReAct ra console; UI để False.
     """
-    return await run_rag_agent(query, store, llm, top_k=top_k, verbose=True)
+    return await run_rag_agent(query, store, llm, top_k=top_k, verbose=verbose)
 
 
 # ===========================================================================
 # Phần 2: Handler route — điều phối multi-agent theo luồng nghiệp vụ chatbot
 # ===========================================================================
 
-async def handle_new_topic(intent: IntentResult, config: AppConfig,
+def _config_for(config: AppConfig, state_path: str) -> AppConfig:
+    """Bản sao config với output_dir trỏ đúng thư mục chứa state_path, để
+    Orchestrator.run() ghi state/báo cáo vào cùng chỗ chatbot đang đọc."""
+    out_dir = str(Path(state_path).parent)
+    if config.orchestrator.output_dir == out_dir:
+        return config
+    return replace(config, orchestrator=replace(config.orchestrator, output_dir=out_dir))
+
+
+async def handle_new_topic(goal: str, constraints: str, config: AppConfig,
                            state_path: str, report_path: str, store_path: str,
-                           model_name: str) -> tuple[ContextMemory | None, VectorStore | None]:
+                           model_name: str,
+                           encoder=None) -> tuple[ContextMemory | None, VectorStore | None, str]:
+    """Luồng "chủ đề mới": bỏ dữ liệu cũ, chạy đủ n_iterations rồi sinh báo cáo.
+
+    Trả (memory, store, thông báo). goal rỗng -> (None, None, thông báo lỗi).
+    Không gọi input()/print(): người gọi (REPL hoặc UI) tự hiển thị thông báo.
     """
-    Xử lý luồng "new_topic": tạo một session mới (reset state cũ) → chạy đủ số vòng lặp 
-    → sinh báo cáo cuối cùng → Trả memmory mới
-    """
-    goal, constraints = helpers.new_session_prompt(intent)
+    goal = (goal or "").strip()
     if not goal:
-        print("  Mục tiêu trống — huỷ tạo mới.")
-        return None, None
-    print(f"Đang chạy hệ thống cho mục tiêu: {goal} (reset dữ liệu cũ) ...")
-    orch = Orchestrator.for_new(goal, constraints, config=config)
-    await orch.run_full(config.orchestrator.n_iterations,
-                        state_path=state_path, report_path=report_path)
+        return None, None, "Mục tiêu nghiên cứu trống — huỷ tạo mới."
+
+    orch = Orchestrator(goal, (constraints or "").strip(),
+                        config=_config_for(config, state_path))
+    await orch.run()
     memory = ContextMemory.load(state_path)
-    store = helpers.rebuild_store(memory, store_path, report_path, model_name)
-    print(f"✓ Hoàn thành. state.json đã lưu, index rebuild ({store.size} chunk).")
-    return memory, store
+    store = helpers.rebuild_store(memory, store_path, report_path, model_name, encoder)
+    return memory, store, (
+        f"✓ Hoàn thành chủ đề mới: {len(memory.hypotheses)} giả thuyết sau "
+        f"{memory.iteration} vòng lặp. Index đã dựng lại ({store.size} chunk)."
+    )
 
 
-async def handle_resume_newfinal(intent: IntentResult, config: AppConfig,
+async def handle_resume_newfinal(n_iterations: int, config: AppConfig,
                                  memory: ContextMemory,
                                  state_path: str, report_path: str,
-                                 store_path: str, model_name: str) -> tuple[ContextMemory, VectorStore]:
-    """Tiếp tục trên state hiện có (KHÔNG reset) → chạy thêm n iteration để ra final mới.
+                                 store_path: str, model_name: str,
+                                 encoder=None,
+                                 on_orchestrator=None) -> tuple[ContextMemory, VectorStore, str]:
+    """Luồng "tiếp thu góp ý rồi chạy lại": giữ nguyên state hiện có (giả thuyết,
+    review, góp ý của người dùng), chạy thêm n vòng rồi viết báo cáo MỚI.
 
-    Dùng memory hiện tại của REPL, kèm start_iteration để chạy tiếp đúng số vòng."""
-    ans = input(f"Chạy thêm bao nhiêu iteration? [mặc định 1]: ").strip()
-    n = int(ans) if ans.isdigit() else 1
+    Đây là vòng lặp chính của chatbot: báo cáo -> góp ý -> chạy lại -> báo cáo mới.
+    """
+    n = max(1, int(n_iterations or 1))
     start_it = memory.iteration
-    print(f"Đang chạy thêm {n} iteration (từ iteration {start_it + 1}) để ra final mới ...")
-    orch = Orchestrator(memory, config=config)   # giữ memory hiện tại, KHÔNG reset
-    await orch.run_full(n_iterations=n, state_path=state_path,
-                        report_path=report_path, start_iteration=start_it + 1)
+    orch = Orchestrator.from_memory(memory, config=_config_for(config, state_path))
+    # Hook cho phep nguoi goi va Orchestrator vua tao (vd: che do mo phong gan
+    # LLM/retriever/encoder gia vao) truoc khi chay.
+    if on_orchestrator is not None:
+        on_orchestrator(orch)
+    await orch.run_iterations(n, state_path=state_path, report_path=report_path)
+
     memory2 = ContextMemory.load(state_path)
-    store = helpers.rebuild_store(memory2, store_path, report_path, model_name)
-    print(f"✓ Xong. iteration hiện tại: {memory2.iteration}, index rebuild ({store.size} chunk).")
-    return memory2, store
+    store = helpers.rebuild_store(memory2, store_path, report_path, model_name, encoder)
+    return memory2, store, (
+        f"✓ Đã chạy thêm {n} vòng (iteration {start_it} → {memory2.iteration}) và "
+        f"viết lại báo cáo. Index đã dựng lại ({store.size} chunk)."
+    )
 
 
-async def handle_review_or_rerun(intent: IntentResult, config: AppConfig,
-                                 memory: ContextMemory, llm: LLMClient,
-                                 state_path: str, report_path: str,
-                                 store_path: str, model_name: str) -> VectorStore | None:
-    """Luồng 'review' / 'rerun': gắn comment (nếu có) + rerun_step (nếu có).
+async def handle_review(intent: IntentResult, memory: ContextMemory, llm: LLMClient,
+                        state_path: str) -> str:
+    """Ghi nhận góp ý của người dùng vào memory (KHÔNG chạy lại).
 
-    Trả VectorStore mới khi có rerun (rebuild index), None khi không rerun.
-    Khi user nhận xét về 1 agent mà không yêu cầu rerun_step, in gợi ý user có
-    thể gõ /run <agent> để chạy lại — KHÔNG tự chạy."""
-    # 1) Gắn comment tuỳ ngữ nghĩa.
-    if intent.comment_text:
-        if intent.target_agent:
-            msg = await add_agent_feedback_comment(memory, intent.target_agent,
-                                                    intent.comment_text, state_path)
-            print(msg)
-        elif intent.target_hypothesis_id:
-            msg = await add_review_comment(memory, llm, intent.target_hypothesis_id,
-                                            intent.comment_text, state_path)
-            print(msg)
-        else:
-            print(f"  → Bạn nhận xét: {intent.comment_text} (chưa gắn vào đối tượng cụ thể).")
+    Góp ý về một giả thuyết -> Review "user_comment"; góp ý về một agent ->
+    agent_feedback. Trả thông báo cho người gọi hiển thị.
+    """
+    if not intent.comment_text:
+        return "Không có nội dung góp ý nào để ghi nhận."
 
-    # 2) Rerun bước (nếu có).
-    if intent.rerun_step:
-        overwrite = helpers.ask_overwrite(intent.rerun_step)
-        orch = Orchestrator(memory, config=config)   # dùng memory hiện tại
-        msg = await orch.run_step(intent.rerun_step, overwrite=overwrite)
-        print(msg)
-        orch.save(state_path)
-        store = helpers.rebuild_store(memory, store_path, report_path, model_name)
-        print(f"  (index rebuild: {store.size} chunk)")
-        return store
+    if intent.target_agent:
+        return await add_agent_feedback_comment(memory, intent.target_agent,
+                                                intent.comment_text, state_path)
+    if intent.target_hypothesis_id:
+        return await add_review_comment(memory, llm, intent.target_hypothesis_id,
+                                        intent.comment_text, state_path)
 
-    # 3) Gợi ý rerun nếu user nhận xét về agent mà không yêu cầu rerun.
-    if intent.target_agent and not intent.rerun_step:
-        print(f"  💡 Bạn có thể gõ \"/run {intent.target_agent}\" để chạy lại "
-              f"agent này (sẽ hỏi keep/overwrite).")
-
-    return None
+    # Không xác định được đối tượng -> ghi làm góp ý chung cho GenerationAgent,
+    # agent duy nhất định hướng chủ đề ở vòng sau.
+    msg = await add_agent_feedback_comment(memory, "generation_agent",
+                                           intent.comment_text, state_path)
+    return f"(không rõ góp ý thuộc về giả thuyết/agent nào — ghi làm góp ý chung)\n{msg}"

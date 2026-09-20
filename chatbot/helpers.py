@@ -12,25 +12,25 @@ from chatbot.vector_store import VectorStore
 
 
 def load_memory_and_store(state_path: str, store_path: str, report_path: str,
-                          model_name: str) -> tuple[ContextMemory, VectorStore]:
+                          model_name: str, encoder=None) -> tuple[ContextMemory, VectorStore]:
     """Nạp ContextMemory + VectorStore. Nếu chưa có index thì build từ state."""
     memory = ContextMemory.load(state_path)
-    store = VectorStore(model_name=model_name)
+    store = VectorStore(model_name=model_name, encoder=encoder)
     try:
         store.load(store_path)
     except FileNotFoundError:
         print(f"[chatbot] Chưa có index, đang build từ {state_path} ...")
         store = build_index(memory, store_path=store_path, report_path=report_path,
-                            model_name=model_name)
+                            model_name=model_name, encoder=encoder)
         print(f"[chatbot] Build xong: {store.size} chunk → {store_path}")
     return memory, store
 
 
 def rebuild_store(memory: ContextMemory, store_path: str, report_path: str,
-                  model_name: str) -> VectorStore:
-    """Đánh lại index từ memory hiện tại (dùng sau khi rerun/new_topic)."""
+                  model_name: str, encoder=None) -> VectorStore:
+    """Đánh lại index từ memory hiện tại (dùng sau khi chạy lại/đổi chủ đề)."""
     return build_index(memory, store_path=store_path, report_path=report_path,
-                       model_name=model_name)
+                       model_name=model_name, encoder=encoder)
 
 
 def ask_overwrite(step: str) -> bool:

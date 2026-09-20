@@ -150,8 +150,7 @@ def _outputs(memory: ContextMemory, out_dir: Path, extra_stats: str = ""):
 
 
 # --------------------------------------------------------------- chạy pipeline
-async def run_pipeline(goal, constraints, mode, model, emb_model, iterations, n_hyp, n_matches,
-                       top_k, dup_threshold, out_dir):
+async def run_pipeline(goal, constraints, mode, model, emb_model, iterations, n_hyp):
     log_lines: List[str] = []
     empty = ("", [], [], {}, "_Chưa có báo cáo._", None)   # stats, rows, ids, details, report, files
 
@@ -160,15 +159,16 @@ async def run_pipeline(goal, constraints, mode, model, emb_model, iterations, n_
                None, gr.update())
         return
 
-    # Ô Number bị xoá trắng -> Gradio gửi None; ô thư mục trống -> Path("") = "." (gốc repo).
-    out_path = Path((out_dir or "").strip() or "output")
+    # Số trận đấu / top-k Evolution / ngưỡng trùng lặp / thư mục kết quả không còn
+    # trên UI — lấy mặc định từ config.py (xem OrchestratorConfig).
+    defaults = OrchestratorConfig()
+    out_path = Path(defaults.output_dir)
     try:
         cfg = AppConfig(
             llm=LLMConfig(model=(model or "").strip()) if (model or "").strip() else LLMConfig(),
             orchestrator=OrchestratorConfig(
+                # Ô Number bị xoá trắng -> Gradio gửi None, nên phải có fallback.
                 n_iterations=int(iterations or 1), hypotheses_per_iteration=int(n_hyp or 3),
-                matches_per_iteration=int(n_matches or 3), top_k_for_evolution=int(top_k or 2),
-                proximity_duplicate_threshold=float(dup_threshold or 0.85),
                 output_dir=str(out_path)),
             # Model embedding chỉ dùng cho kho RAG của chatbot; ProximityAgent ở
             # nhánh này chấm tương đồng bằng LLM nên không cần embedding.
@@ -521,15 +521,14 @@ def build_ui() -> gr.Blocks:
                         emb_model = gr.Textbox(label="Model embedding (kho RAG cua chatbot)",
                                                value=ChatbotConfig.embedding_model)
 
+                # Chỉ để lộ 2 tham số người dùng thực sự quyết được. Số trận đấu,
+                # top-k, ngưỡng trùng lặp và thư mục kết quả lấy mặc định từ
+                # config.py: số trận do Ranking tự ghép cặp theo đồ thị proximity
+                # nên đặt tay một con số là vô nghĩa.
                 with gr.Accordion("Tham số vòng lặp", open=False):
                     with gr.Row():
                         iterations = gr.Number(label="Số vòng lặp", value=1, precision=0, minimum=1, maximum=10)
                         n_hyp = gr.Number(label="Giả thuyết mỗi vòng", value=3, precision=0, minimum=1, maximum=20)
-                        n_matches = gr.Number(label="Trận đấu mỗi vòng", value=3, precision=0, minimum=1, maximum=50)
-                        top_k = gr.Number(label="Top-k cho Evolution", value=2, precision=0, minimum=1, maximum=10)
-                        dup_threshold = gr.Number(label="Ngưỡng coi là trùng lặp", value=0.85,
-                                                  minimum=0.0, maximum=1.0, step=0.05)
-                        out_dir = gr.Textbox(label="Thư mục kết quả", value="output")
 
                 with gr.Row():
                     run_btn = gr.Button("Chạy", variant="primary", scale=2)
@@ -603,8 +602,7 @@ def build_ui() -> gr.Blocks:
                        notes, detail, session_state, target]
         run_event = run_btn.click(
             fn=run_pipeline,
-            inputs=[goal, constraints, mode, model, emb_model, iterations, n_hyp, n_matches,
-                    top_k, dup_threshold, out_dir],
+            inputs=[goal, constraints, mode, model, emb_model, iterations, n_hyp],
             outputs=run_outputs,
             concurrency_limit=1,   # log gom qua root logger -> 2 lượt song song sẽ lẫn nhau
         )
